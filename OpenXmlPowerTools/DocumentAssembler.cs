@@ -4,6 +4,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -12,6 +13,8 @@ using System.Xml.Linq;
 using System.Xml.Schema;
 using System.Xml.XPath;
 using DocumentFormat.OpenXml.Packaging;
+using OpenXmlPowerTools.HtmlToWml;
+using OpenXmlPowerTools.HtmlToWml.CSS;
 
 namespace OpenXmlPowerTools
 {
@@ -37,7 +40,7 @@ namespace OpenXmlPowerTools
                     var te = new TemplateError();
                     foreach (var part in wordDoc.ContentParts())
                     {
-                        ProcessTemplatePart(data, te, part);
+                        ProcessTemplatePart(data, te, part, wordDoc);
                     }
                     templateError = te.HasError;
                 }
@@ -46,7 +49,7 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static void ProcessTemplatePart(XElement data, TemplateError te, OpenXmlPart part)
+        private static void ProcessTemplatePart(XElement data, TemplateError te, OpenXmlPart part, WordprocessingDocument wDoc)
         {
             XDocument xDoc = part.GetXDocument();
 
@@ -69,14 +72,14 @@ namespace OpenXmlPowerTools
             ProcessOrphanEndRepeatEndConditional(xDocRoot, te);
 
             // do the actual content replacement
-            xDocRoot = (XElement)ContentReplacementTransform(xDocRoot, data, te);
+            xDocRoot = (XElement)ContentReplacementTransform(xDocRoot, data, te, wDoc);
 
             xDoc.Elements().First().ReplaceWith(xDocRoot);
             part.PutXDocument();
             return;
         }
 
-        private static XName[] s_MetaToForceToBlock = new XName[] {
+        private static readonly XName[] _metaToForceToBlock = new XName[] {
             PA.Conditional,
             PA.EndConditional,
             PA.Repeat,
@@ -90,7 +93,7 @@ namespace OpenXmlPowerTools
             {
                 if (element.Name == W.p)
                 {
-                    var childMeta = element.Elements().Where(n => s_MetaToForceToBlock.Contains(n.Name)).ToList();
+                    var childMeta = element.Elements().Where(n => _metaToForceToBlock.Contains(n.Name)).ToList();
                     var count = childMeta.Count();
                     if (count == 1)
                     {
@@ -99,7 +102,7 @@ namespace OpenXmlPowerTools
                         if (otherTextInParagraph != "")
                         {
                             var newPara = new XElement(element);
-                            var newMeta = newPara.Elements().Where(n => s_MetaToForceToBlock.Contains(n.Name)).First();
+                            var newMeta = newPara.Elements().Where(n => _metaToForceToBlock.Contains(n.Name)).First();
                             newMeta.ReplaceWith(CreateRunErrorMessage("Error: Unmatched metadata can't be in paragraph with other text", te));
                             return newPara;
                         }
@@ -292,9 +295,10 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static List<string> s_AliasList = new List<string>()
+        private static readonly List<string> _aliasList = new List<string>()
         {
             PA.Content.ToString(),
+            PA.Image.ToString(),
             PA.Table.ToString(),
             PA.Repeat.ToString(),
             PA.EndRepeat.ToString(),
@@ -310,7 +314,7 @@ namespace OpenXmlPowerTools
                 if (element.Name == W.sdt)
                 {
                     var alias = (string)element.Elements(W.sdtPr).Elements(W.alias).Attributes(W.val).FirstOrDefault();
-                    if (alias == null || alias == "" || s_AliasList.Contains(alias))
+                    if (alias == null || alias == "" || _aliasList.Contains(alias))
                     {
                         var ccContents = element
                             .DescendantsTrimmed(W.txbxContent)
@@ -467,9 +471,9 @@ namespace OpenXmlPowerTools
 
         private static string ValidatePerSchema(XElement element)
         {
-            if (s_PASchemaSets == null)
+            if (_pASchemaSets == null)
             {
-                s_PASchemaSets = new Dictionary<XName, PASchemaSet>()
+                _pASchemaSets = new Dictionary<XName, PASchemaSet>()
                 {
                     {
                         PA.Content,
@@ -480,6 +484,21 @@ namespace OpenXmlPowerTools
                                     <xs:complexType>
                                       <xs:attribute name='Select' type='xs:string' use='required' />
                                       <xs:attribute name='Optional' type='xs:boolean' use='optional' />
+                                    </xs:complexType>
+                                  </xs:element>
+                                </xs:schema>",
+                        }
+                    },
+                    {
+                        PA.Image,
+                        new PASchemaSet() {
+                            XsdMarkup =
+                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                                  <xs:element name='Image'>
+                                    <xs:complexType>
+                                      <xs:attribute name='Select' type='xs:string' use='required' />
+                                      <xs:attribute name='Width' type='xs:boolean' use='optional' />
+                                      <xs:attribute name='Height' type='xs:boolean' use='optional' />
                                     </xs:complexType>
                                   </xs:element>
                                 </xs:schema>",
@@ -556,7 +575,7 @@ namespace OpenXmlPowerTools
                         }
                     },
                 };
-                foreach (var item in s_PASchemaSets)
+                foreach (var item in _pASchemaSets)
                 {
                     var itemPAss = item.Value;
                     XmlSchemaSet schemas = new XmlSchemaSet();
@@ -564,11 +583,11 @@ namespace OpenXmlPowerTools
                     itemPAss.SchemaSet = schemas;
                 }
             }
-            if (!s_PASchemaSets.ContainsKey(element.Name))
+            if (!_pASchemaSets.ContainsKey(element.Name))
             {
                 return string.Format("Invalid XML: {0} is not a valid element", element.Name.LocalName);
             }
-            var paSchemaSet = s_PASchemaSets[element.Name];
+            var paSchemaSet = _pASchemaSets[element.Name];
             XDocument d = new XDocument(element);
             string message = null;
             d.Validate(paSchemaSet.SchemaSet, (sender, e) =>
@@ -590,6 +609,7 @@ namespace OpenXmlPowerTools
             public static XName Conditional = "Conditional";
             public static XName ConditionalElse = "ConditionalElse";
             public static XName EndConditional = "EndConditional";
+            public static XName Image = "Image";
 
             public static XName Select = "Select";
             public static XName Optional = "Optional";
@@ -597,6 +617,8 @@ namespace OpenXmlPowerTools
             public static XName NotMatch = "NotMatch";
             public static XName Exists = "Exists";
             public static XName Depth = "Depth";
+            public static XName Width = "Width";
+            public static XName Height = "Height";
         }
 
         private class PASchemaSet
@@ -605,14 +627,14 @@ namespace OpenXmlPowerTools
             public XmlSchemaSet SchemaSet;
         }
 
-        private static Dictionary<XName, PASchemaSet> s_PASchemaSets = null;
+        private static Dictionary<XName, PASchemaSet> _pASchemaSets = null;
 
         private class TemplateError
         {
             public bool HasError = false;
         }
 
-        private static object ContentReplacementTransform(XNode node, XElement data, TemplateError templateError)
+        private static object ContentReplacementTransform(XNode node, XElement data, TemplateError templateError, WordprocessingDocument wDoc)
         {
             if (node is XElement element)
             {
@@ -660,6 +682,27 @@ namespace OpenXmlPowerTools
                         return list;
                     }
                 }
+                if (element.Name == PA.Image)
+                {
+                    XElement para = element.Descendants(W.p).FirstOrDefault();
+                    XElement run = element.Descendants(W.r).FirstOrDefault();
+
+                    var width = (long)element.Attribute(PA.Width);
+                    var height = (long)element.Attribute(PA.Height);
+                    var xPath = (string)element.Attribute(PA.Select);                    
+
+                    string endocodedImage;
+                    try
+                    {
+                        endocodedImage = EvaluateXPathToString(data, xPath, false);
+                    }
+                    catch (XPathException e)
+                    {
+                        return CreateContextErrorMessage(element, "XPathException: " + e.Message, templateError);
+                    }
+
+                    return CreateImage(wDoc, endocodedImage, width, height);
+                }
                 if (element.Name == PA.Repeat)
                 {
                     string selector = (string)element.Attribute(PA.Select);
@@ -685,7 +728,7 @@ namespace OpenXmlPowerTools
                         {
                             var content = element
                                 .Elements()
-                                .Select(e => ContentReplacementTransform(e, d, templateError))
+                                .Select(e => ContentReplacementTransform(e, d, templateError, wDoc))
                                 .ToList();
                             return content;
                         })
@@ -712,7 +755,7 @@ namespace OpenXmlPowerTools
                         .Skip(2)
                         .ToList();
                     var footerRows = footerRowsBeforeTransform
-                        .Select(x => ContentReplacementTransform(x, data, templateError))
+                        .Select(x => ContentReplacementTransform(x, data, templateError, wDoc))
                         .ToList();
                     if (protoRow == null)
                         return CreateContextErrorMessage(element, string.Format("Table does not contain a prototype row"), templateError);
@@ -787,7 +830,7 @@ namespace OpenXmlPowerTools
                         return CreateContextErrorMessage(element, e.Message, templateError);
                     }
 
-                    var content = element.Elements().Select(e => ContentReplacementTransform(e, data, templateError));
+                    var content = element.Elements().Select(e => ContentReplacementTransform(e, data, templateError, wDoc));
 
                     if (hasExistsCondition)
                     {
@@ -802,18 +845,165 @@ namespace OpenXmlPowerTools
                         return content;
 
                     if (conditionalElse != null)
-                        return conditionalElse.Elements().Select(e => ContentReplacementTransform(e, data, templateError));
+                        return conditionalElse.Elements().Select(e => ContentReplacementTransform(e, data, templateError, wDoc));
 
                     return null;
                 }
 
                 return new XElement(element.Name,
                     element.Attributes(),
-                    element.Nodes().Select(n => ContentReplacementTransform(n, data, templateError)));
+                    element.Nodes().Select(n => ContentReplacementTransform(n, data, templateError, wDoc)));
             }
             return node;
         }
 
+        private static XElement CreateImage(WordprocessingDocument wDoc, string endocodedImage, long width, long height)
+        {
+            var mdp = wDoc.MainDocumentPart;
+            var rId = "R" + Guid.NewGuid().ToString().Replace("-", "");
+            var ipt = ImagePartType.Png;
+            var newPart = mdp.AddImagePart(ipt, rId);
+            var bytes = Convert.FromBase64String(endocodedImage);
+            using (Stream s = newPart.GetStream(FileMode.Create, FileAccess.ReadWrite))
+                s.Write(bytes, 0, bytes.Length);
+
+            PictureId pid = wDoc.Annotation<PictureId>();
+            if (pid == null)
+            {
+                pid = new PictureId { Id = 1, };
+                wDoc.AddAnnotation(pid);
+            }
+            int pictureId = pid.Id;
+            ++pid.Id;
+
+            string pictureDescription = "Picture " + pictureId.ToString();
+            XElement run = new XElement(W.r,
+                GetRunPropertiesForImage(),
+                new XElement(W.drawing,
+                    GetImageAsInline(width, height, rId, pictureId, pictureDescription)));
+            return run;
+        }
+        private static XElement GetRunPropertiesForImage()
+            => new XElement(W.rPr, new XElement(W.noProof));
+
+        private static XElement GetImageAsInline(long width, long height, string rId, int pictureId, string pictureDescription)
+        {
+            var size = new SizeEmu((Emu)width, (Emu)height);
+            XElement inline = new XElement(WP.inline, // 20.4.2.8
+                new XAttribute(XNamespace.Xmlns + "wp", WP.wp.NamespaceName),
+                new XAttribute(NoNamespace.distT, 0),  // distance from top of image to text, in EMUs, no effect if the parent is inline
+                new XAttribute(NoNamespace.distB, 0),  // bottom
+                new XAttribute(NoNamespace.distL, 0),  // left
+                new XAttribute(NoNamespace.distR, 0),  // right
+                GetImageExtent(size),
+                GetEffectExtent(),
+                GetDocPr(pictureId, pictureDescription),
+                GetCNvGraphicFramePr(),
+                GetGraphicForImage(rId, size, pictureId, pictureDescription));
+            return inline;
+        }
+
+        private static XElement GetImageExtent(SizeEmu szEmu)
+        {
+            return new XElement(WP.extent,
+                new XAttribute(NoNamespace.cx, (long)szEmu.m_Width),   // in EMUs
+                new XAttribute(NoNamespace.cy, (long)szEmu.m_Height)); // in EMUs
+        }
+        private static XElement GetEffectExtent()
+        {
+            return new XElement(WP.effectExtent,
+                new XAttribute(NoNamespace.l, 0),
+                new XAttribute(NoNamespace.t, 0),
+                new XAttribute(NoNamespace.r, 0),
+                new XAttribute(NoNamespace.b, 0));
+        }
+
+        private static SizeEmu GetImageSizeInEmus(XElement img, Bitmap bmp)
+        {
+            double hres = bmp.HorizontalResolution;
+            double vres = bmp.VerticalResolution;
+            Size s = bmp.Size;
+            Emu cx = (long)((double)(s.Width / hres) * Emu.s_EmusPerInch);
+            Emu cy = (long)((double)(s.Height / vres) * Emu.s_EmusPerInch);
+
+            CssExpression width = img.GetProp("width");
+            CssExpression height = img.GetProp("height");
+            if (width.IsNotAuto && height.IsAuto)
+            {
+                Emu widthInEmus = (Emu)width;
+                double percentChange = (float)widthInEmus / (float)cx;
+                cx = widthInEmus;
+                cy = (long)(cy * percentChange);
+                return new SizeEmu(cx, cy);
+            }
+            if (width.IsAuto && height.IsNotAuto)
+            {
+                Emu heightInEmus = (Emu)height;
+                double percentChange = (float)heightInEmus / (float)cy;
+                cy = heightInEmus;
+                cx = (long)(cx * percentChange);
+                return new SizeEmu(cx, cy);
+            }
+            if (width.IsNotAuto && height.IsNotAuto)
+            {
+                return new SizeEmu((Emu)width, (Emu)height);
+            }
+            return new SizeEmu(cx, cy);
+        }
+
+        private static XElement GetDocPr(int pictureId, string pictureDescription)
+        {
+            return new XElement(WP.docPr,
+                new XAttribute(NoNamespace.id, pictureId),
+                new XAttribute(NoNamespace.name, pictureDescription));
+        }
+
+        private static XElement GetCNvGraphicFramePr()
+        {
+            return new XElement(WP.cNvGraphicFramePr,
+                new XElement(A.graphicFrameLocks,
+                    new XAttribute(XNamespace.Xmlns + "a", A.a.NamespaceName),
+                    new XAttribute(NoNamespace.noChangeAspect, 1)));
+        }
+
+        private static XElement GetGraphicForImage(string rId, SizeEmu szEmu, int pictureId, string pictureDescription)
+        {
+            XElement graphic = new XElement(A.graphic,
+                new XAttribute(XNamespace.Xmlns + "a", A.a.NamespaceName),
+                new XElement(A.graphicData,
+                    new XAttribute(NoNamespace.uri, Pic.pic.NamespaceName),
+                    new XElement(Pic._pic,
+                        new XAttribute(XNamespace.Xmlns + "pic", Pic.pic.NamespaceName),
+                        new XElement(Pic.nvPicPr,
+                            new XElement(Pic.cNvPr,
+                                new XAttribute(NoNamespace.id, pictureId),
+                                new XAttribute(NoNamespace.name, pictureDescription)),
+                            new XElement(Pic.cNvPicPr,
+                                new XElement(A.picLocks,
+                                    new XAttribute(NoNamespace.noChangeAspect, 1),
+                                    new XAttribute(NoNamespace.noChangeArrowheads, 1)))),
+                        new XElement(Pic.blipFill,
+                            new XElement(A.blip,
+                                new XAttribute(R.embed, rId),
+                                new XElement(A.extLst,
+                                    new XElement(A.ext,
+                                        new XAttribute(NoNamespace.uri, "{28A0092B-C50C-407E-A947-70E740481C1C}"),
+                                        new XElement(A14.useLocalDpi,
+                                            new XAttribute(NoNamespace.val, "0"))))),
+                            new XElement(A.stretch,
+                                new XElement(A.fillRect))),
+                        new XElement(Pic.spPr,
+                            new XAttribute(NoNamespace.bwMode, "auto"),
+                            new XElement(A.xfrm,
+                                new XElement(A.off, new XAttribute(NoNamespace.x, 0), new XAttribute(NoNamespace.y, 0)),
+                                new XElement(A.ext, new XAttribute(NoNamespace.cx, (long)szEmu.m_Width), new XAttribute(NoNamespace.cy, (long)szEmu.m_Height))),
+                            new XElement(A.prstGeom, new XAttribute(NoNamespace.prst, "rect"),
+                                new XElement(A.avLst)),
+                            new XElement(A.noFill),
+                            new XElement(A.ln,
+                                new XElement(A.noFill))))));
+            return graphic;
+        }
         private static object CreateContextErrorMessage(XElement element, string errorMessage, TemplateError templateError)
         {
             XElement para = element.Descendants(W.p).FirstOrDefault();
