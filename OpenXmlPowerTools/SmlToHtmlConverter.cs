@@ -4,25 +4,22 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Drawing;
-using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
-using System.IO;
+using SkiaSharp;
 
 namespace OpenXmlPowerTools
 {
     public partial class SmlDocument
     {
-        [SuppressMessage("ReSharper", "UnusedMember.Global")]
         public XElement ConvertToHtml(SmlToHtmlConverterSettings htmlConverterSettings, string tableName)
         {
             return SmlToHtmlConverter.ConvertTableToHtml(this, htmlConverterSettings, tableName);
         }
 
-        [SuppressMessage("ReSharper", "UnusedMember.Global")]
         public XElement ConvertTableToHtml(string tableName)
         {
             SmlToHtmlConverterSettings settings = new SmlToHtmlConverterSettings();
@@ -30,7 +27,6 @@ namespace OpenXmlPowerTools
         }
     }
 
-    [SuppressMessage("ReSharper", "FieldCanBeMadeReadOnly.Global")]
     public class SmlToHtmlConverterSettings
     {
         public string PageTitle;
@@ -220,13 +216,14 @@ namespace OpenXmlPowerTools
         }
 
         private static object ConvertToHtmlTransform(WordprocessingDocument wordDoc,
-            WmlToHtmlConverterSettings settings, XNode node)
+                                                     WmlToHtmlConverterSettings settings,
+                                                     XNode node)
         {
             // Ignore element.
             return null;
         }
 
-        private static readonly HashSet<string> UnknownFonts = new HashSet<string>();
+        private static readonly HashSet<string> _unknownFonts = new();
         private static HashSet<string> _knownFamilies;
 
         private static HashSet<string> KnownFamilies
@@ -236,15 +233,15 @@ namespace OpenXmlPowerTools
                 if (_knownFamilies == null)
                 {
                     _knownFamilies = new HashSet<string>();
-                    var families = FontFamily.Families;
+                    var families = SKFontManager.Default.FontFamilies;
                     foreach (var fam in families)
-                        _knownFamilies.Add(fam.Name);
+                        _knownFamilies.Add(fam);
                 }
                 return _knownFamilies;
             }
         }
 
-        private static readonly Dictionary<string, string> FontFallback = new Dictionary<string, string>()
+        private static readonly Dictionary<string, string> _fontFallback = new()
         {
             { "Arial", @"'{0}', 'sans-serif'" },
             { "Arial Narrow", @"'{0}', 'sans-serif'" },
@@ -281,9 +278,9 @@ namespace OpenXmlPowerTools
 
         private static void CreateFontCssProperty(string font, Dictionary<string, string> style)
         {
-            if (FontFallback.ContainsKey(font))
+            if (_fontFallback.ContainsKey(font))
             {
-                style.AddIfMissing("font-family", string.Format(FontFallback[font], font));
+                style.AddIfMissing("font-family", string.Format(_fontFallback[font], font));
                 return;
             }
             style.AddIfMissing("font-family", font);

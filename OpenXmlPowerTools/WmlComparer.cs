@@ -7,16 +7,15 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Globalization;
 using System.IO;
 using System.IO.Packaging;
+using System.Linq;
 using System.Text;
 using System.Xml.Linq;
+using DocumentFormat.OpenXml.Experimental;
 using DocumentFormat.OpenXml.Packaging;
-using System.Drawing;
-using System.Security.Cryptography;
-using OpenXmlPowerTools;
+using SkiaSharp;
 
 // It is possible to optimize DescendantContentAtoms
 
@@ -79,7 +78,7 @@ namespace OpenXmlPowerTools
     {
         public WmlDocument RevisedDocument;
         public string Revisor;
-        public Color Color;
+        public SKColor Color;
     }
 
     public static class WmlComparer
@@ -88,13 +87,17 @@ namespace OpenXmlPowerTools
         public static bool s_True = true;
         public static bool s_SaveIntermediateFilesForDebugging = false;
 
-        public static WmlDocument Compare(WmlDocument source1, WmlDocument source2, WmlComparerSettings settings)
+        public static WmlDocument Compare(WmlDocument source1,
+                                          WmlDocument source2,
+                                          WmlComparerSettings settings)
         {
             return CompareInternal(source1, source2, settings, true);
         }
 
-        private static WmlDocument CompareInternal(WmlDocument source1, WmlDocument source2, WmlComparerSettings settings,
-            bool preProcessMarkupInOriginal)
+        private static WmlDocument CompareInternal(WmlDocument source1,
+                                                   WmlDocument source2,
+                                                   WmlComparerSettings settings,
+                                                   bool preProcessMarkupInOriginal)
         {
             if (preProcessMarkupInOriginal)
                 source1 = PreProcessMarkup(source1, settings.StartingIdForFootnotesEndnotes + 1000);
@@ -503,7 +506,7 @@ namespace OpenXmlPowerTools
         private class ConsolidationInfo
         {
             public string Revisor;
-            public Color Color;
+            public SKColor Color;
             public XElement RevisionElement;
             public bool InsertBefore = false;
             public string RevisionHash;
@@ -512,7 +515,7 @@ namespace OpenXmlPowerTools
             public string RevisionString; // for debugging purposes only
         }
 
-        private static string nl = Environment.NewLine;
+        private static readonly string _nl = Environment.NewLine;
 
         /*****************************************************************************************************************/
         // Consolidate processes footnotes and endnotes in a particular fashion - if the unmodified document has a footnote
@@ -521,16 +524,17 @@ namespace OpenXmlPowerTools
         // should be.
         /*****************************************************************************************************************/
         public static WmlDocument Consolidate(WmlDocument original,
-            List<WmlRevisedDocumentInfo> revisedDocumentInfoList,
-            WmlComparerSettings settings)
+                                              List<WmlRevisedDocumentInfo> revisedDocumentInfoList,
+                                              WmlComparerSettings settings)
         {
             var consolidateSettings = new WmlComparerConsolidateSettings();
             return Consolidate(original, revisedDocumentInfoList, settings, consolidateSettings);
         }
 
         public static WmlDocument Consolidate(WmlDocument original,
-            List<WmlRevisedDocumentInfo> revisedDocumentInfoList,
-            WmlComparerSettings settings, WmlComparerConsolidateSettings consolidateSettings)
+                                              List<WmlRevisedDocumentInfo> revisedDocumentInfoList,
+                                              WmlComparerSettings settings,
+                                              WmlComparerConsolidateSettings consolidateSettings)
         {
 
 #if false
@@ -590,284 +594,276 @@ namespace OpenXmlPowerTools
 
             var revisedDocumentInfoListCount = revisedDocumentInfoList.Count();
 
-            using (MemoryStream consolidatedMs = new MemoryStream())
+            using var consolidatedMs = new MemoryStream();
+            consolidatedMs.Write(consolidated.DocumentByteArray, 0, consolidated.DocumentByteArray.Length);
+            using (WordprocessingDocument consolidatedWDoc = WordprocessingDocument.Open(consolidatedMs, true))
             {
-                consolidatedMs.Write(consolidated.DocumentByteArray, 0, consolidated.DocumentByteArray.Length);
-                using (WordprocessingDocument consolidatedWDoc = WordprocessingDocument.Open(consolidatedMs, true))
+                var consolidatedMainDocPart = consolidatedWDoc.MainDocumentPart;
+                var consolidatedMainDocPartXDoc = consolidatedMainDocPart.GetXDocument();
+
+                // save away last sectPr
+                XElement savedSectPr = consolidatedMainDocPartXDoc
+                    .Root
+                    .Element(W.body)
+                    .Elements(W.sectPr)
+                    .LastOrDefault();
+                consolidatedMainDocPartXDoc
+                    .Root
+                    .Element(W.body)
+                    .Elements(W.sectPr)
+                    .Remove();
+
+                var consolidatedByUnid = consolidatedMainDocPartXDoc
+                    .Descendants()
+                    .Where(d => (d.Name == W.p || d.Name == W.tbl) && d.Attribute(PtOpenXml.Unid) != null)
+                    .ToDictionary(d => (string)d.Attribute(PtOpenXml.Unid));
+
+                int deltaNbr = 1;
+                foreach (var revisedDocumentInfo in revisedDocumentInfoList)
                 {
-                    var consolidatedMainDocPart = consolidatedWDoc.MainDocumentPart;
-                    var consolidatedMainDocPartXDoc = consolidatedMainDocPart.GetXDocument();
+                    settings.StartingIdForFootnotesEndnotes = (deltaNbr * 2000) + 3000;
+                    var delta = WmlComparer.CompareInternal(originalWithUnids, revisedDocumentInfo.RevisedDocument, settings, false);
 
-                    // save away last sectPr
-                    XElement savedSectPr = consolidatedMainDocPartXDoc
-                        .Root
-                        .Element(W.body)
-                        .Elements(W.sectPr)
-                        .LastOrDefault();
-                    consolidatedMainDocPartXDoc
-                        .Root
-                        .Element(W.body)
-                        .Elements(W.sectPr)
-                        .Remove();
-
-                    var consolidatedByUnid = consolidatedMainDocPartXDoc
-                        .Descendants()
-                        .Where(d => (d.Name == W.p || d.Name == W.tbl) && d.Attribute(PtOpenXml.Unid) != null)
-                        .ToDictionary(d => (string)d.Attribute(PtOpenXml.Unid));
-
-                    int deltaNbr = 1;
-                    foreach (var revisedDocumentInfo in revisedDocumentInfoList)
+                    if (s_SaveIntermediateFilesForDebugging && settings.DebugTempFileDi != null)
                     {
-                        settings.StartingIdForFootnotesEndnotes = (deltaNbr * 2000) + 3000;
-                        var delta = WmlComparer.CompareInternal(originalWithUnids, revisedDocumentInfo.RevisedDocument, settings, false);
-
-                        if (s_SaveIntermediateFilesForDebugging && settings.DebugTempFileDi != null)
-                        {
-                            var name1 = string.Format("Delta-{0}.docx", deltaNbr++);
-                            var deltaFi = new FileInfo(Path.Combine(settings.DebugTempFileDi.FullName, name1));
-                            delta.SaveAs(deltaFi.FullName);
-                        }
-
-                        var colorRgb = revisedDocumentInfo.Color.ToArgb();
-                        var colorString = colorRgb.ToString("X");
-                        if (colorString.Length == 8)
-                            colorString = colorString.Substring(2);
-
-                        using (MemoryStream msOriginalWithUnids = new MemoryStream())
-                        using (MemoryStream msDelta = new MemoryStream())
-                        {
-                            msOriginalWithUnids.Write(originalWithUnids.DocumentByteArray, 0, originalWithUnids.DocumentByteArray.Length);
-                            msDelta.Write(delta.DocumentByteArray, 0, delta.DocumentByteArray.Length);
-                            using (WordprocessingDocument wDocOriginalWithUnids = WordprocessingDocument.Open(msOriginalWithUnids, true))
-                            using (WordprocessingDocument wDocDelta = WordprocessingDocument.Open(msDelta, true))
-                            {
-                                var modMainDocPart = wDocDelta.MainDocumentPart;
-                                var modMainDocPartXDoc = modMainDocPart.GetXDocument();
-                                var blockLevelContentToMove = modMainDocPartXDoc
-                                    .Root
-                                    .DescendantsTrimmed(d => d.Name == W.txbxContent || d.Name == W.tr)
-                                    .Where(d => d.Name == W.p || d.Name == W.tbl)
-                                    .Where(d => d.Descendants().Any(z => z.Name == W.ins || z.Name == W.del) ||
-                                        ContentContainsFootnoteEndnoteReferencesThatHaveRevisions(d, wDocDelta))
-                                    .ToList();
-
-                                foreach (var revision in blockLevelContentToMove)
-                                {
-                                    var elementLookingAt = revision;
-                                    while (true)
-                                    {
-                                        var unid = (string)elementLookingAt.Attribute(PtOpenXml.Unid);
-                                        if (unid == null)
-                                            throw new OpenXmlPowerToolsException("Internal error");
-
-                                        XElement elementToInsertAfter = null;
-                                        if (consolidatedByUnid.ContainsKey(unid))
-                                            elementToInsertAfter = consolidatedByUnid[unid];
-
-                                        if (elementToInsertAfter != null)
-                                        {
-                                            ConsolidationInfo ci = new ConsolidationInfo();
-                                            ci.Revisor = revisedDocumentInfo.Revisor;
-                                            ci.Color = revisedDocumentInfo.Color;
-                                            ci.RevisionElement = revision;
-                                            ci.Footnotes = revision
-                                                .Descendants(W.footnoteReference)
-                                                .Select(fr =>
-                                                {
-                                                    var id = (int)fr.Attribute(W.id);
-                                                    var fnXDoc = wDocDelta.MainDocumentPart.FootnotesPart.GetXDocument();
-                                                    var footnote = fnXDoc.Root.Elements(W.footnote).FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
-                                                    if (footnote == null)
-                                                        throw new OpenXmlPowerToolsException("Internal Error");
-                                                    return footnote;
-                                                })
-                                                .ToArray();
-                                            ci.Endnotes = revision
-                                                .Descendants(W.endnoteReference)
-                                                .Select(er =>
-                                                {
-                                                    var id = (int)er.Attribute(W.id);
-                                                    var enXDoc = wDocDelta.MainDocumentPart.EndnotesPart.GetXDocument();
-                                                    var endnote = enXDoc.Root.Elements(W.endnote).FirstOrDefault(en => (int)en.Attribute(W.id) == id);
-                                                    if (endnote == null)
-                                                        throw new OpenXmlPowerToolsException("Internal Error");
-                                                    return endnote;
-                                                })
-                                                .ToArray();
-                                            AddToAnnotation(
-                                                wDocDelta,
-                                                consolidatedWDoc,
-                                                elementToInsertAfter,
-                                                ci,
-                                                settings);
-                                            break;
-                                        }
-                                        else
-                                        {
-                                            // find an element to insert after
-                                            var elementBeforeRevision = elementLookingAt
-                                                .SiblingsBeforeSelfReverseDocumentOrder()
-                                                .FirstOrDefault(e => e.Attribute(PtOpenXml.Unid) != null);
-                                            if (elementBeforeRevision == null)
-                                            {
-                                                var firstElement = consolidatedMainDocPartXDoc
-                                                    .Root
-                                                    .Element(W.body)
-                                                    .Elements()
-                                                    .FirstOrDefault(e => e.Name == W.p || e.Name == W.tbl);
-
-                                                ConsolidationInfo ci = new ConsolidationInfo();
-                                                ci.Revisor = revisedDocumentInfo.Revisor;
-                                                ci.Color = revisedDocumentInfo.Color;
-                                                ci.RevisionElement = revision;
-                                                ci.InsertBefore = true;
-                                                ci.Footnotes = revision
-                                                    .Descendants(W.footnoteReference)
-                                                    .Select(fr =>
-                                                    {
-                                                        var id = (int)fr.Attribute(W.id);
-                                                        var fnXDoc = wDocDelta.MainDocumentPart.FootnotesPart.GetXDocument();
-                                                        var footnote = fnXDoc.Root.Elements(W.footnote).FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
-                                                        if (footnote == null)
-                                                            throw new OpenXmlPowerToolsException("Internal Error");
-                                                        return footnote;
-                                                    })
-                                                    .ToArray();
-                                                ci.Endnotes = revision
-                                                    .Descendants(W.endnoteReference)
-                                                    .Select(er =>
-                                                    {
-                                                        var id = (int)er.Attribute(W.id);
-                                                        var enXDoc = wDocDelta.MainDocumentPart.EndnotesPart.GetXDocument();
-                                                        var endnote = enXDoc.Root.Elements(W.endnote).FirstOrDefault(en => (int)en.Attribute(W.id) == id);
-                                                        if (endnote == null)
-                                                            throw new OpenXmlPowerToolsException("Internal Error");
-                                                        return endnote;
-                                                    })
-                                                    .ToArray();
-                                                AddToAnnotation(
-                                                    wDocDelta,
-                                                    consolidatedWDoc,
-                                                    firstElement,
-                                                    ci,
-                                                    settings);
-                                                break;
-                                            }
-                                            else
-                                            {
-                                                elementLookingAt = elementBeforeRevision;
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                }
-                                CopyMissingStylesFromOneDocToAnother(wDocDelta, consolidatedWDoc);
-                            }
-                        }
+                        var name1 = string.Format("Delta-{0}.docx", deltaNbr++);
+                        var deltaFi = new FileInfo(Path.Combine(settings.DebugTempFileDi.FullName, name1));
+                        delta.SaveAs(deltaFi.FullName);
                     }
 
-                    // at this point, everything is added as an annotation, from all documents to be merged.
-                    // so now the process is to go through and add the annotations to the document
-                    var elementsToProcess = consolidatedMainDocPartXDoc
+                    var colorRgb = revisedDocumentInfo.Color;
+                    var colorString = colorRgb.ToString();
+                    if (colorString.Length == 8)
+                        colorString = colorString.Substring(2);
+
+                    using var msOriginalWithUnids = new MemoryStream();
+                    using var msDelta = new MemoryStream();
+                    msOriginalWithUnids.Write(originalWithUnids.DocumentByteArray, 0, originalWithUnids.DocumentByteArray.Length);
+                    msDelta.Write(delta.DocumentByteArray, 0, delta.DocumentByteArray.Length);
+                    using var wDocOriginalWithUnids = WordprocessingDocument.Open(msOriginalWithUnids, true);
+                    using var wDocDelta = WordprocessingDocument.Open(msDelta, true);
+                    var modMainDocPart = wDocDelta.MainDocumentPart;
+                    var modMainDocPartXDoc = modMainDocPart.GetXDocument();
+                    var blockLevelContentToMove = modMainDocPartXDoc
                         .Root
-                        .Descendants()
-                        .Where(d => d.Annotation<List<ConsolidationInfo>>() != null)
+                        .DescendantsTrimmed(d => d.Name == W.txbxContent || d.Name == W.tr)
+                        .Where(d => d.Name == W.p || d.Name == W.tbl)
+                        .Where(d => d.Descendants().Any(z => z.Name == W.ins || z.Name == W.del) ||
+                            ContentContainsFootnoteEndnoteReferencesThatHaveRevisions(d, wDocDelta))
                         .ToList();
 
-                    var emptyParagraph = new XElement(W.p,
-                        new XElement(W.pPr,
-                            new XElement(W.spacing,
-                                new XAttribute(W.after, "0"),
-                                new XAttribute(W.line, "240"),
-                                new XAttribute(W.lineRule, "auto"))));
-
-                    foreach (var ele in elementsToProcess)
+                    foreach (var revision in blockLevelContentToMove)
                     {
-                        var lci = ele.Annotation<List<ConsolidationInfo>>();
-
-                        // process before
-                        var contentToAddBefore = lci
-                            .Where(ci => ci.InsertBefore == true)
-                            .GroupAdjacent(ci => ci.Revisor + ci.Color.ToString())
-                            .Select((groupedCi, idx) => AssembledConjoinedRevisionContent(emptyParagraph, groupedCi, idx, consolidatedWDoc, consolidateSettings));
-                        ele.AddBeforeSelf(contentToAddBefore);
-
-                        // process after
-                        // if all revisions from all revisors are exactly the same, then instead of adding multiple tables after
-                        // that contains the revisions, then simply replace the paragraph with the one with the revisions.
-                        // RC004 documents contain the test data to exercise this.
-
-                        var lciCount = lci.Where(ci => ci.InsertBefore == false).Count();
-
-                        if (lciCount > 1 && lciCount == revisedDocumentInfoListCount)
+                        var elementLookingAt = revision;
+                        while (true)
                         {
-                            /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                            // This is the code that determines if revisions should be consolidated into one.
+                            var unid = (string)elementLookingAt.Attribute(PtOpenXml.Unid)
+                                ?? throw new OpenXmlPowerToolsException("Internal error");
 
-                            var uniqueRevisions = lci
-                                .Where(ci => ci.InsertBefore == false)
-                                .GroupBy(ci =>
-                                {
-                                    // Get a hash after first accepting revisions and compressing the text.
-                                    var acceptedRevisionElement = RevisionProcessor.AcceptRevisionsForElement(ci.RevisionElement);
-                                    var sha1Hash = PtUtils.SHA1HashStringForUTF8String(acceptedRevisionElement.Value.Replace(" ", "").Replace(" ", "").Replace(" ", "").Replace("\n", "").Replace(".", "").Replace(",", "").ToUpper());
-                                    return sha1Hash;
-                                })
-                                .OrderByDescending(g => g.Count())
-                                .ToList();
-                            var uniqueRevisionCount = uniqueRevisions.Count();
+                            XElement elementToInsertAfter = null;
+                            if (consolidatedByUnid.ContainsKey(unid))
+                                elementToInsertAfter = consolidatedByUnid[unid];
 
-                            /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-                            if (uniqueRevisionCount == 1)
+                            if (elementToInsertAfter != null)
                             {
-                                MoveFootnotesEndnotesForConsolidatedRevisions(lci.First(), consolidatedWDoc);
-
-                                var dummyElement = new XElement("dummy", lci.First().RevisionElement);
-
-                                foreach (var rev in dummyElement.Descendants().Where(d => d.Attribute(W.author) != null))
+                                var ci = new ConsolidationInfo
                                 {
-                                    var aut = rev.Attribute(W.author);
-                                    aut.Value = "ITU";
-                                }
-
-                                ele.ReplaceWith(dummyElement.Elements());
-                                continue;
+                                    Revisor = revisedDocumentInfo.Revisor,
+                                    Color = revisedDocumentInfo.Color,
+                                    RevisionElement = revision,
+                                    Footnotes = revision
+                                    .Descendants(W.footnoteReference)
+                                    .Select(fr =>
+                                    {
+                                        var id = (int)fr.Attribute(W.id);
+                                        var fnXDoc = wDocDelta.MainDocumentPart.FootnotesPart.GetXDocument();
+                                        var footnote = fnXDoc.Root.Elements(W.footnote).FirstOrDefault(fn => (int)fn.Attribute(W.id) == id)
+                                            ?? throw new OpenXmlPowerToolsException("Internal Error");
+                                        return footnote;
+                                    })
+                                    .ToArray(),
+                                    Endnotes = revision
+                                    .Descendants(W.endnoteReference)
+                                    .Select(er =>
+                                    {
+                                        var id = (int)er.Attribute(W.id);
+                                        var enXDoc = wDocDelta.MainDocumentPart.EndnotesPart.GetXDocument();
+                                        var endnote = enXDoc.Root.Elements(W.endnote).FirstOrDefault(en => (int)en.Attribute(W.id) == id)
+                                            ?? throw new OpenXmlPowerToolsException("Internal Error");
+                                        return endnote;
+                                    })
+                                    .ToArray()
+                                };
+                                AddToAnnotation(
+                                    wDocDelta,
+                                    consolidatedWDoc,
+                                    elementToInsertAfter,
+                                    ci,
+                                    settings);
+                                break;
                             }
-
-                            // this is the location where we have determined that there are the same number of revisions for this paragraph as there are revision documents.
-                            // however, the hash for all of them were not the same.
-                            // therefore, they would be added to the consolidated document as separate revisions.
-
-                            // create a log that shows what is different, in detail.
-                            if (settings.LogCallback != null)
+                            else
                             {
-                                StringBuilder sb = new StringBuilder();
-                                sb.Append("====================================================================================================" + nl);
-                                sb.Append("Non-Consolidated Revision" + nl);
-                                sb.Append("====================================================================================================" + nl);
-                                foreach (var urList in uniqueRevisions)
+                                // find an element to insert after
+                                var elementBeforeRevision = elementLookingAt
+                                    .SiblingsBeforeSelfReverseDocumentOrder()
+                                    .FirstOrDefault(e => e.Attribute(PtOpenXml.Unid) != null);
+                                if (elementBeforeRevision == null)
                                 {
-                                    var revisorList = urList.Select(ur => ur.Revisor + " : ").StringConcatenate().TrimEnd(' ', ':');
-                                    sb.Append("Revisors: " + revisorList + nl);
-                                    var str = RevisionToLogFormTransform(urList.First().RevisionElement, 0, false);
-                                    sb.Append(str);
-                                    sb.Append("=========================" + nl);
+                                    var firstElement = consolidatedMainDocPartXDoc
+                                        .Root
+                                        .Element(W.body)
+                                        .Elements()
+                                        .FirstOrDefault(e => e.Name == W.p || e.Name == W.tbl);
+
+                                    var ci = new ConsolidationInfo
+                                    {
+                                        Revisor = revisedDocumentInfo.Revisor,
+                                        Color = revisedDocumentInfo.Color,
+                                        RevisionElement = revision,
+                                        InsertBefore = true,
+                                        Footnotes = revision
+                                        .Descendants(W.footnoteReference)
+                                        .Select(fr =>
+                                        {
+                                            var id = (int)fr.Attribute(W.id);
+                                            var fnXDoc = wDocDelta.MainDocumentPart.FootnotesPart.GetXDocument();
+                                            var footnote = fnXDoc.Root.Elements(W.footnote).FirstOrDefault(fn => (int)fn.Attribute(W.id) == id)
+                                                ?? throw new OpenXmlPowerToolsException("Internal Error");
+                                            return footnote;
+                                        }).ToArray(),
+                                        Endnotes = revision
+                                        .Descendants(W.endnoteReference)
+                                        .Select(er =>
+                                        {
+                                            var id = (int)er.Attribute(W.id);
+                                            var enXDoc = wDocDelta.MainDocumentPart.EndnotesPart.GetXDocument();
+                                            var endnote = enXDoc.Root.Elements(W.endnote).FirstOrDefault(en => (int)en.Attribute(W.id) == id)
+                                                ?? throw new OpenXmlPowerToolsException("Internal Error");
+                                            return endnote;
+                                        }).ToArray()
+                                    };
+                                    AddToAnnotation(
+                                        wDocDelta,
+                                        consolidatedWDoc,
+                                        firstElement,
+                                        ci,
+                                        settings);
+                                    break;
                                 }
-                                sb.Append(nl);
-                                settings.LogCallback(sb.ToString());
+                                else
+                                {
+                                    elementLookingAt = elementBeforeRevision;
+                                    continue;
+                                }
                             }
                         }
-
-                        // todo this is where it assembles the content to put into a single cell table
-                        // the magic function is AssembledConjoinedRevisionContent
-
-                        var contentToAddAfter = lci
-                            .Where(ci => ci.InsertBefore == false)
-                            .GroupAdjacent(ci => ci.Revisor + ci.Color.ToString())
-                            .Select((groupedCi, idx) => AssembledConjoinedRevisionContent(emptyParagraph, groupedCi, idx, consolidatedWDoc, consolidateSettings));
-                        ele.AddAfterSelf(contentToAddAfter);
                     }
+                    CopyMissingStylesFromOneDocToAnother(wDocDelta, consolidatedWDoc);
+                }
+
+                // at this point, everything is added as an annotation, from all documents to be merged.
+                // so now the process is to go through and add the annotations to the document
+                var elementsToProcess = consolidatedMainDocPartXDoc
+                    .Root
+                    .Descendants()
+                    .Where(d => d.Annotation<List<ConsolidationInfo>>() != null)
+                    .ToList();
+
+                var emptyParagraph = new XElement(W.p,
+                    new XElement(W.pPr,
+                        new XElement(W.spacing,
+                            new XAttribute(W.after, "0"),
+                            new XAttribute(W.line, "240"),
+                            new XAttribute(W.lineRule, "auto"))));
+
+                foreach (var ele in elementsToProcess)
+                {
+                    var lci = ele.Annotation<List<ConsolidationInfo>>();
+
+                    // process before
+                    var contentToAddBefore = lci
+                        .Where(ci => ci.InsertBefore)
+                        .GroupAdjacent(ci => ci.Revisor + ci.Color)
+                        .Select((groupedCi, idx) => AssembledConjoinedRevisionContent(emptyParagraph, groupedCi, idx, consolidatedWDoc, consolidateSettings));
+                    ele.AddBeforeSelf(contentToAddBefore);
+
+                    // process after
+                    // if all revisions from all revisors are exactly the same, then instead of adding multiple tables after
+                    // that contains the revisions, then simply replace the paragraph with the one with the revisions.
+                    // RC004 documents contain the test data to exercise this.
+
+                    var lciCount = lci.Where(ci => ci.InsertBefore == false).Count();
+
+                    if (lciCount > 1 && lciCount == revisedDocumentInfoListCount)
+                    {
+                        /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                        // This is the code that determines if revisions should be consolidated into one.
+
+                        var uniqueRevisions = lci
+                            .Where(ci => ci.InsertBefore == false)
+                            .GroupBy(ci =>
+                            {
+                                // Get a hash after first accepting revisions and compressing the text.
+                                var acceptedRevisionElement = RevisionProcessor.AcceptRevisionsForElement(ci.RevisionElement);
+                                var sha1Hash = PtUtils.SHA1HashStringForUTF8String(acceptedRevisionElement.Value.Replace(" ", "").Replace(" ", "").Replace(" ", "").Replace("\n", "").Replace(".", "").Replace(",", "").ToUpper());
+                                return sha1Hash;
+                            })
+                            .OrderByDescending(g => g.Count())
+                            .ToList();
+                        var uniqueRevisionCount = uniqueRevisions.Count();
+
+                        /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+                        if (uniqueRevisionCount == 1)
+                        {
+                            MoveFootnotesEndnotesForConsolidatedRevisions(lci.First(), consolidatedWDoc);
+
+                            var dummyElement = new XElement("dummy", lci.First().RevisionElement);
+
+                            foreach (var rev in dummyElement.Descendants().Where(d => d.Attribute(W.author) != null))
+                            {
+                                var aut = rev.Attribute(W.author);
+                                aut.Value = "ITU";
+                            }
+
+                            ele.ReplaceWith(dummyElement.Elements());
+                            continue;
+                        }
+
+                        // this is the location where we have determined that there are the same number of revisions for this paragraph as there are revision documents.
+                        // however, the hash for all of them were not the same.
+                        // therefore, they would be added to the consolidated document as separate revisions.
+
+                        // create a log that shows what is different, in detail.
+                        if (settings.LogCallback != null)
+                        {
+                            StringBuilder sb = new StringBuilder();
+                            sb.Append("====================================================================================================" + _nl);
+                            sb.Append("Non-Consolidated Revision" + _nl);
+                            sb.Append("====================================================================================================" + _nl);
+                            foreach (var urList in uniqueRevisions)
+                            {
+                                var revisorList = urList.Select(ur => ur.Revisor + " : ").StringConcatenate().TrimEnd(' ', ':');
+                                sb.Append("Revisors: " + revisorList + _nl);
+                                var str = RevisionToLogFormTransform(urList.First().RevisionElement, 0, false);
+                                sb.Append(str);
+                                sb.Append("=========================" + _nl);
+                            }
+                            sb.Append(_nl);
+                            settings.LogCallback(sb.ToString());
+                        }
+                    }
+
+                    // todo this is where it assembles the content to put into a single cell table
+                    // the magic function is AssembledConjoinedRevisionContent
+
+                    var contentToAddAfter = lci
+                        .Where(ci => !ci.InsertBefore)
+                        .GroupAdjacent(ci => ci.Revisor + ci.Color)
+                        .Select((groupedCi, idx) => AssembledConjoinedRevisionContent(emptyParagraph, groupedCi, idx, consolidatedWDoc, consolidateSettings));
+                    ele.AddAfterSelf(contentToAddAfter);
+                }
 
 #if false
                     // old code
@@ -960,27 +956,26 @@ namespace OpenXmlPowerTools
                     }
 #endif
 
-                    consolidatedMainDocPartXDoc
-                        .Root
-                        .Element(W.body)
-                        .Add(savedSectPr);
+                consolidatedMainDocPartXDoc
+                    .Root
+                    .Element(W.body)
+                    .Add(savedSectPr);
 
-                    AddTableGridStyleToStylesPart(consolidatedWDoc.MainDocumentPart.StyleDefinitionsPart);
-                    FixUpRevisionIds(consolidatedWDoc, consolidatedMainDocPartXDoc);
-                    IgnorePt14NamespaceForFootnotesEndnotes(consolidatedWDoc);
-                    FixUpDocPrIds(consolidatedWDoc);
-                    FixUpShapeIds(consolidatedWDoc);
-                    FixUpGroupIds(consolidatedWDoc);
-                    FixUpShapeTypeIds(consolidatedWDoc);
-                    RemoveCustomMarkFollows(consolidatedWDoc);
-                    WmlComparer.IgnorePt14Namespace(consolidatedMainDocPartXDoc.Root);
-                    consolidatedWDoc.MainDocumentPart.PutXDocument();
-                    AddFootnotesEndnotesStyles(consolidatedWDoc);
-                }
-
-                var newConsolidatedDocument = new WmlDocument("consolidated.docx", consolidatedMs.ToArray());
-                return newConsolidatedDocument;
+                AddTableGridStyleToStylesPart(consolidatedWDoc.MainDocumentPart.StyleDefinitionsPart);
+                FixUpRevisionIds(consolidatedWDoc, consolidatedMainDocPartXDoc);
+                IgnorePt14NamespaceForFootnotesEndnotes(consolidatedWDoc);
+                FixUpDocPrIds(consolidatedWDoc);
+                FixUpShapeIds(consolidatedWDoc);
+                FixUpGroupIds(consolidatedWDoc);
+                FixUpShapeTypeIds(consolidatedWDoc);
+                RemoveCustomMarkFollows(consolidatedWDoc);
+                IgnorePt14Namespace(consolidatedMainDocPartXDoc.Root);
+                consolidatedWDoc.MainDocumentPart.PutXDocument();
+                AddFootnotesEndnotesStyles(consolidatedWDoc);
             }
+
+            var newConsolidatedDocument = new WmlDocument("consolidated.docx", consolidatedMs.ToArray());
+            return newConsolidatedDocument;
         }
 
         private static void RemoveCustomMarkFollows(WordprocessingDocument consolidatedWDoc)
@@ -1002,9 +997,9 @@ namespace OpenXmlPowerTools
             if (consolidatedEndnoteXDoc.Root.Elements(W.endnote).Any())
                 maxEndnoteId = consolidatedEndnoteXDoc.Root.Elements(W.endnote).Select(e => (int)e.Attribute(W.id)).Max(); ;
 
-            /// At this point, content might contain a footnote or endnote reference.
-            /// Need to add the footnote / endnote into the consolidated document (with the same guid id)
-            /// Because of preprocessing of the documents, all footnote and endnote references will be unique at this point
+            // At this point, content might contain a footnote or endnote reference.
+            // Need to add the footnote / endnote into the consolidated document (with the same guid id)
+            // Because of preprocessing of the documents, all footnote and endnote references will be unique at this point
 
             if (ci.RevisionElement.Descendants(W.footnoteReference).Any())
             {
@@ -1043,8 +1038,7 @@ namespace OpenXmlPowerTools
 
         private static object CleanPartTransform(XNode node)
         {
-            var element = node as XElement;
-            if (element != null)
+            if (node is XElement element)
             {
                 return new XElement(element.Name,
                     element.Attributes().Where(a => a.Name.Namespace != PtOpenXml.pt &&
@@ -1057,7 +1051,7 @@ namespace OpenXmlPowerTools
         private static string RevisionToLogFormTransform(XElement element, int depth, bool inserting)
         {
             if (element.Name == W.p)
-                return "Paragraph" + nl + element.Elements().Select(e => RevisionToLogFormTransform(e, depth + 2, false)).StringConcatenate();
+                return "Paragraph" + _nl + element.Elements().Select(e => RevisionToLogFormTransform(e, depth + 2, false)).StringConcatenate();
             if (element.Name == W.pPr || element.Name == W.rPr)
                 return "";
             if (element.Name == W.r)
@@ -1065,12 +1059,12 @@ namespace OpenXmlPowerTools
             if (element.Name == W.t)
             {
                 if (inserting)
-                    return "".PadRight(depth) + "Inserted Text:" + QuoteIt((string)element) + nl;
+                    return "".PadRight(depth) + "Inserted Text:" + QuoteIt((string)element) + _nl;
                 else
-                    return "".PadRight(depth) + "Text:" + QuoteIt((string)element) + nl;
+                    return "".PadRight(depth) + "Text:" + QuoteIt((string)element) + _nl;
             }
             if (element.Name == W.delText)
-                return "".PadRight(depth) + "Deleted Text:" + QuoteIt((string)element) + nl;
+                return "".PadRight(depth) + "Deleted Text:" + QuoteIt((string)element) + _nl;
             if (element.Name == W.ins)
                 return element.Elements().Select(e => RevisionToLogFormTransform(e, depth, true)).StringConcatenate();
             if (element.Name == W.del)
@@ -1091,39 +1085,42 @@ namespace OpenXmlPowerTools
             var footnotesPart = wDoc.MainDocumentPart.FootnotesPart;
             var endnotesPart = wDoc.MainDocumentPart.EndnotesPart;
 
-            XDocument footnotesPartXDoc = null;
             if (footnotesPart != null)
             {
-                footnotesPartXDoc = footnotesPart.GetXDocument();
-                WmlComparer.IgnorePt14Namespace(footnotesPartXDoc.Root);
+                _ = footnotesPart.GetXDocument();
+                IgnorePt14Namespace(((XDocument)null).Root);
             }
 
-            XDocument endnotesPartXDoc = null;
             if (endnotesPart != null)
             {
-                endnotesPartXDoc = endnotesPart.GetXDocument();
-                WmlComparer.IgnorePt14Namespace(endnotesPartXDoc.Root);
+                _ = endnotesPart.GetXDocument();
+                IgnorePt14Namespace(((XDocument)null).Root);
             }
 
-            if (footnotesPart != null)
-                footnotesPart.PutXDocument();
-
-            if (endnotesPart != null)
-                endnotesPart.PutXDocument();
+            footnotesPart?.PutXDocument();
+            endnotesPart?.PutXDocument();
         }
 
-        private static XElement[] AssembledConjoinedRevisionContent(XElement emptyParagraph, IGrouping<string, ConsolidationInfo> groupedCi, int idx, WordprocessingDocument wDocConsolidated,
-            WmlComparerConsolidateSettings consolidateSettings)
+        private static XElement[] AssembledConjoinedRevisionContent(XElement emptyParagraph,
+                                                                    IGrouping<string, ConsolidationInfo> groupedCi,
+                                                                    int idx,
+                                                                    WordprocessingDocument wDocConsolidated,
+                                                                    WmlComparerConsolidateSettings consolidateSettings)
         {
             var consolidatedFootnoteXDoc = wDocConsolidated.MainDocumentPart.FootnotesPart.GetXDocument();
             var consolidatedEndnoteXDoc = wDocConsolidated.MainDocumentPart.EndnotesPart.GetXDocument();
 
-            int maxFootnoteId = 1;
-            if (consolidatedFootnoteXDoc.Root.Elements(W.footnote).Any())
+            var maxFootnoteId = 1;
+            if (consolidatedFootnoteXDoc.Root?.Elements(W.footnote).Any() == true)
+            {
                 maxFootnoteId = consolidatedFootnoteXDoc.Root.Elements(W.footnote).Select(e => (int)e.Attribute(W.id)).Max();
-            int maxEndnoteId = 1;
-            if (consolidatedEndnoteXDoc.Root.Elements(W.endnote).Any())
-                maxEndnoteId = consolidatedEndnoteXDoc.Root.Elements(W.endnote).Select(e => (int)e.Attribute(W.id)).Max(); ;
+            }
+
+            var maxEndnoteId = 1;
+            if (consolidatedEndnoteXDoc.Root?.Elements(W.endnote).Any() == true)
+            {
+                maxEndnoteId = consolidatedEndnoteXDoc.Root.Elements(W.endnote).Select(e => (int)e.Attribute(W.id)).Max();
+            }
 
             var revisor = groupedCi.First().Revisor;
 
@@ -1139,10 +1136,12 @@ namespace OpenXmlPowerTools
                         new XElement(W.bCs)),
                     new XElement(W.t, revisor)));
 
-            var colorRgb = groupedCi.First().Color.ToArgb();
-            var colorString = colorRgb.ToString("X");
+            var colorRgb = groupedCi.First().Color;
+            var colorString = colorRgb.ToString();
             if (colorString.Length == 8)
+            {
                 colorString = colorString.Substring(2);
+            }
 
             if (consolidateSettings.ConsolidateWithTable)
             {
@@ -1168,72 +1167,39 @@ namespace OpenXmlPowerTools
                     new XElement(W.tr,
                         new XElement(W.tc,
                             new XElement(W.tcPr,
-                            new XElement(W.shd,
-                                new XAttribute(W.val, "clear"),
-                                new XAttribute(W.color, "auto"),
-                                new XAttribute(W.fill, colorString))),
+                                new XElement(W.shd,
+                                    new XAttribute(W.val, "clear"),
+                                    new XAttribute(W.color, "auto"),
+                                    new XAttribute(W.fill, colorString))),
                             captionParagraph,
                             groupedCi.Select(ci =>
                             {
-                                /// At this point, content might contain a footnote or endnote reference.
-                                /// Need to add the footnote / endnote into the consolidated document (with the same guid id)
-                                /// Because of preprocessing of the documents, all footnote and endnote references will be unique at this point
-
-                                if (ci.RevisionElement.Descendants(W.endnoteReference).Any())
-                                {
-                                    var endnoteXDoc = wDocConsolidated.MainDocumentPart.EndnotesPart.GetXDocument();
-                                    foreach (var endnoteReference in ci.RevisionElement.Descendants(W.endnoteReference))
-                                    {
-                                        var id = (int)endnoteReference.Attribute(W.id);
-                                        var endnote = ci.Endnotes.FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
-                                        var newId = maxEndnoteId + 1;
-                                        maxEndnoteId++;
-                                        endnoteReference.Attribute(W.id).Value = newId.ToString();
-                                        var clonedEndnote = new XElement(endnote);
-                                        clonedEndnote.Attribute(W.id).Value = newId.ToString();
-                                        endnoteXDoc.Root.Add(clonedEndnote);
-                                    }
-                                    wDocConsolidated.MainDocumentPart.EndnotesPart.PutXDocument();
-                                }
-
-                                if (ci.RevisionElement.Descendants(W.footnoteReference).Any())
-                                {
-                                    var footnoteXDoc = wDocConsolidated.MainDocumentPart.FootnotesPart.GetXDocument();
-                                    foreach (var footnoteReference in ci.RevisionElement.Descendants(W.footnoteReference))
-                                    {
-                                        var id = (int)footnoteReference.Attribute(W.id);
-                                        var footnote = ci.Footnotes.FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
-                                        var newId = maxFootnoteId + 1;
-                                        maxFootnoteId++;
-                                        footnoteReference.Attribute(W.id).Value = newId.ToString();
-                                        var clonedFootnote = new XElement(footnote);
-                                        clonedFootnote.Attribute(W.id).Value = newId.ToString();
-                                        footnoteXDoc.Root.Add(clonedFootnote);
-                                    }
-                                    wDocConsolidated.MainDocumentPart.FootnotesPart.PutXDocument();
-                                }
-
-                                // it is important that this code follows the code above, because the code above updates ci.RevisionElement (using DML)
-
                                 XElement paraAfter = null;
                                 if (ci.RevisionElement.Name == W.tbl)
                                     paraAfter = emptyParagraph;
-                                var revisionInTable = new[] {
+                                XElement[] revisionInTable =
+                                {
                                     ci.RevisionElement,
-                                    paraAfter,
-                                    };
+                                    paraAfter
+                                };
+
+                                // At this point, content might contain a footnote or endnote reference.
+                                // Need to add the footnote / endnote into the consolidated document (with the same
+                                // guid id). Because of preprocessing of the documents, all footnote and endnote
+                                // references will be unique at this point
+
+                                AddFootnotes(ci, wDocConsolidated, ref maxFootnoteId);
+                                AddEndnotes(ci, wDocConsolidated, ref maxEndnoteId);
 
                                 return revisionInTable;
                             }))));
 
-                // if the last paragraph has a deleted paragraph mark, then remove the deletion from the paragraph mark.  This is to prevent Word from misbehaving.
-                // the last paragraph in a cell must not have a deleted paragraph mark.
-                var theCell = table
-                    .Descendants(W.tc)
-                    .FirstOrDefault();
-                var lastPara = theCell
-                    .Elements(W.p)
-                    .LastOrDefault();
+                // if the last paragraph has a deleted paragraph mark, then remove the deletion from the paragraph mark.
+                // This is to prevent Word from misbehaving. the last paragraph in a cell must not have a deleted
+                // paragraph mark.
+                var theCell = table.Descendants(W.tc).FirstOrDefault();
+                var lastPara = theCell?.Elements(W.p).LastOrDefault();
+
                 if (lastPara != null)
                 {
                     var isDeleted = lastPara
@@ -1241,29 +1207,25 @@ namespace OpenXmlPowerTools
                         .Elements(W.rPr)
                         .Elements(W.del)
                         .Any();
+
                     if (isDeleted)
+                    {
                         lastPara
                             .Elements(W.pPr)
                             .Elements(W.rPr)
                             .Elements(W.del)
                             .Remove();
+                    }
                 }
 
-                var content = new[] {
-                                    idx == 0 ? emptyParagraph : null,
-                                    table,
-                                    emptyParagraph,
-                                };
-								
-                var dummyElement = new XElement("dummy", content);
-
-                foreach (var rev in dummyElement.Descendants().Where(d => d.Attribute(W.author) != null))
+                XElement[] content =
                 {
-                    var aut = rev.Attribute(W.author);
-                    aut.Value = revisor;
-                }
+                    idx == 0 ? emptyParagraph : null,
+                    table,
+                    emptyParagraph
+                };
 
-                return dummyElement.Elements().ToArray();
+                return content;
             }
             else
             {
@@ -1271,80 +1233,99 @@ namespace OpenXmlPowerTools
                 {
                     XElement paraAfter = null;
                     if (ci.RevisionElement.Name == W.tbl)
+                    {
                         paraAfter = emptyParagraph;
-                    var revisionInTable = new[] {
-                                    ci.RevisionElement,
-                                    paraAfter,
-                                    };
-
-                    /// At this point, content might contain a footnote or endnote reference.
-                    /// Need to add the footnote / endnote into the consolidated document (with the same guid id)
-                    /// Because of preprocessing of the documents, all footnote and endnote references will be unique at this point
-
-                    if (ci.RevisionElement.Descendants(W.footnoteReference).Any())
-                    {
-                        var footnoteXDoc = wDocConsolidated.MainDocumentPart.FootnotesPart.GetXDocument();
-                        foreach (var footnoteReference in ci.RevisionElement.Descendants(W.footnoteReference))
-                        {
-                            var id = (int)footnoteReference.Attribute(W.id);
-                            var footnote = ci.Footnotes.FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
-                            var newId = maxFootnoteId + 1;
-                            maxFootnoteId++;
-                            footnoteReference.Attribute(W.id).Value = newId.ToString();
-                            var clonedFootnote = new XElement(footnote);
-                            clonedFootnote.Attribute(W.id).Value = newId.ToString();
-                            footnoteXDoc.Root.Add(clonedFootnote);
-                        }
-                        wDocConsolidated.MainDocumentPart.FootnotesPart.PutXDocument();
                     }
 
-                    if (ci.RevisionElement.Descendants(W.endnoteReference).Any())
+                    XElement[] revisionInTable =
                     {
-                        var endnoteXDoc = wDocConsolidated.MainDocumentPart.EndnotesPart.GetXDocument();
-                        foreach (var endnoteReference in ci.RevisionElement.Descendants(W.endnoteReference))
-                        {
-                            var id = (int)endnoteReference.Attribute(W.id);
-                            var endnote = ci.Endnotes.FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
-                            var newId = maxEndnoteId + 1;
-                            maxEndnoteId++;
-                            endnoteReference.Attribute(W.id).Value = newId.ToString();
-                            var clonedEndnote = new XElement(endnote);
-                            clonedEndnote.Attribute(W.id).Value = newId.ToString();
-                            endnoteXDoc.Root.Add(clonedEndnote);
-                        }
-                        wDocConsolidated.MainDocumentPart.EndnotesPart.PutXDocument();
-                    }
+                        ci.RevisionElement,
+                        paraAfter
+                    };
+
+                    // At this point, content might contain a footnote or endnote reference.
+                    // Need to add the footnote / endnote into the consolidated document (with the same
+                    // guid id). Because of preprocessing of the documents, all footnote and endnote
+                    // references will be unique at this point
+
+                    AddFootnotes(ci, wDocConsolidated, ref maxFootnoteId);
+                    AddEndnotes(ci, wDocConsolidated, ref maxEndnoteId);
 
                     return revisionInTable;
                 });
 
-                var dummyElement = new XElement("dummy",
-                    content.SelectMany(m => m));
-
+                var dummyElement = new XElement("dummy", content.SelectMany(m => m));
                 foreach (var rev in dummyElement.Descendants().Where(d => d.Attribute(W.author) != null))
                 {
-                    var aut = rev.Attribute(W.author);
-                    aut.Value = revisor;
+                    rev.SetAttributeValue(W.author, revisor);
                 }
 
                 return dummyElement.Elements().ToArray();
             }
         }
 
-        private static void AddToAnnotation(
-            WordprocessingDocument wDocDelta,
-            WordprocessingDocument consolidatedWDoc,
-            XElement elementToInsertAfter,
-            ConsolidationInfo consolidationInfo,
-            WmlComparerSettings settings)
+        private static void AddFootnotes(ConsolidationInfo ci, WordprocessingDocument wDocConsolidated, ref int maxFootnoteId)
         {
-            Package packageOfDeletedContent = wDocDelta.MainDocumentPart.OpenXmlPackage.Package;
-            Package packageOfNewContent = consolidatedWDoc.MainDocumentPart.OpenXmlPackage.Package;
-            PackagePart partInDeletedDocument = packageOfDeletedContent.GetPart(wDocDelta.MainDocumentPart.Uri);
-            PackagePart partInNewDocument = packageOfNewContent.GetPart(consolidatedWDoc.MainDocumentPart.Uri);
+            if (ci.RevisionElement.Descendants(W.footnoteReference).Any())
+            {
+                var footnoteXDoc = wDocConsolidated.MainDocumentPart.FootnotesPart.GetXDocument();
+                foreach (var footnoteReference in ci.RevisionElement.Descendants(W.footnoteReference))
+                {
+                    var id = (int)footnoteReference.Attribute(W.id);
+                    var footnote = ci.Footnotes.FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
+                    if (footnote != null)
+                    {
+                        var newId = ++maxFootnoteId;
+                        footnoteReference.SetAttributeValue(W.id, newId);
+
+                        var clonedFootnote = new XElement(footnote);
+                        clonedFootnote.SetAttributeValue(W.id, newId);
+                        footnoteXDoc.Root?.Add(clonedFootnote);
+                    }
+                }
+
+                wDocConsolidated.MainDocumentPart.FootnotesPart.PutXDocument();
+            }
+        }
+
+        private static void AddEndnotes(ConsolidationInfo ci, WordprocessingDocument wDocConsolidated, ref int maxEndnoteId)
+        {
+            if (ci.RevisionElement.Descendants(W.endnoteReference).Any())
+            {
+                var endnoteXDoc = wDocConsolidated.MainDocumentPart.EndnotesPart.GetXDocument();
+                foreach (var endnoteReference in ci.RevisionElement.Descendants(W.endnoteReference))
+                {
+                    var id = (int)endnoteReference.Attribute(W.id);
+                    var endnote = ci.Endnotes.FirstOrDefault(fn => (int)fn.Attribute(W.id) == id);
+                    if (endnote != null)
+                    {
+                        var newId = ++maxEndnoteId;
+                        endnoteReference.SetAttributeValue(W.id, newId);
+
+                        var clonedEndnote = new XElement(endnote);
+                        clonedEndnote.SetAttributeValue(W.id, newId);
+                        endnoteXDoc.Root?.Add(clonedEndnote);
+                    }
+                }
+
+                wDocConsolidated.MainDocumentPart.EndnotesPart.PutXDocument();
+            }
+        }
+
+
+        private static void AddToAnnotation(WordprocessingDocument wDocDelta,
+                                            WordprocessingDocument consolidatedWDoc,
+                                            XElement elementToInsertAfter,
+                                            ConsolidationInfo consolidationInfo,
+                                            WmlComparerSettings settings)
+        {
+            var packageOfDeletedContent = wDocDelta.MainDocumentPart.OpenXmlPackage.GetPackage();
+            var packageOfNewContent = consolidatedWDoc.MainDocumentPart.OpenXmlPackage.GetPackage();
+            var partInDeletedDocument = packageOfDeletedContent.GetPart(wDocDelta.MainDocumentPart.Uri);
+            var partInNewDocument = packageOfNewContent.GetPart(consolidatedWDoc.MainDocumentPart.Uri);
             consolidationInfo.RevisionElement = MoveRelatedPartsToDestination(partInDeletedDocument, partInNewDocument, consolidationInfo.RevisionElement);
 
-            var clonedForHashing = (XElement)CloneBlockLevelContentForHashing(consolidatedWDoc.MainDocumentPart, consolidationInfo.RevisionElement, false, settings);
+            var clonedForHashing = CloneBlockLevelContentForHashing(consolidatedWDoc.MainDocumentPart, consolidationInfo.RevisionElement, false, settings);
             clonedForHashing.Descendants().Where(d => d.Name == W.ins || d.Name == W.del).Attributes(W.id).Remove();
             var shaString = clonedForHashing.ToString(SaveOptions.DisableFormatting)
                 .Replace(" xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"", "");
@@ -1619,7 +1600,7 @@ namespace OpenXmlPowerTools
             // if cus1 and cus2 have completely different content, then just return the first document deleted, and the second document inserted.
             List<CorrelatedSequence> correlatedSequence = null;
 
-            correlatedSequence = DetectUnrelatedSources(cus1, cus2, settings);
+            correlatedSequence = DetectUnrelatedSources(cus1, cus2);
 
             if (correlatedSequence == null)
                 correlatedSequence = Lcs(cus1, cus2, settings);
@@ -2765,13 +2746,10 @@ namespace OpenXmlPowerTools
                     .Root
                     .Elements()
                     .FirstOrDefault(e => (string)e.Attribute(W.id) == oldId);
-                if (footnote == null)
-                {
-                    footnote = footnotesPartBeforeXDoc
+                footnote ??= footnotesPartBeforeXDoc
                         .Root
                         .Elements()
                         .FirstOrDefault(e => (string)e.Attribute(W.id) == oldId);
-                }
                 if (footnote == null)
                     throw new OpenXmlPowerToolsException("Internal error");
                 var cloned = new XElement(footnote);
@@ -2801,13 +2779,10 @@ namespace OpenXmlPowerTools
                     .Root
                     .Elements()
                     .FirstOrDefault(e => (string)e.Attribute(W.id) == oldId);
-                if (endnote == null)
-                {
-                    endnote = endnotesPartBeforeXDoc
+                endnote ??= endnotesPartBeforeXDoc
                         .Root
                         .Elements()
                         .FirstOrDefault(e => (string)e.Attribute(W.id) == oldId);
-                }
                 if (endnote == null)
                     throw new OpenXmlPowerToolsException("Internal error");
                 var cloned = new XElement(endnote);
@@ -2836,7 +2811,7 @@ namespace OpenXmlPowerTools
                 endnotesPartWithRevisions.PutXDocument();
             }
         }
-
+        /*
         /// Here is the crux of the fix to the algorithm.  After assembling the entire list of ComparisonUnitAtoms, we do the following:
         /// - First, figure out the maximum hierarchy depth, considering only paragraphs, txbx, txbxContent, tables, rows, cells, and content controls.
         /// - For documents that do not contain tables, nor text boxes, this maximum hierarchy depth will always be 1.
@@ -2872,6 +2847,7 @@ namespace OpenXmlPowerTools
         /// document, but their ancestors actually point to the same paragraph.
         /// 
         /// Fix this in the algorithm, and also keep the appropriate list in ComparisonUnitAtom class.
+        */
 
         private static void AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly(List<ComparisonUnitAtom> comparisonUnitAtomList)
         {
@@ -2953,14 +2929,11 @@ namespace OpenXmlPowerTools
                 }
             }
 
-            /// If the following loop finds a pPr that is in a text box, then continue on, processing the pPr and all of its contents as though it were
-            /// content in the containing text box.  This is going to leave it after this loop where the AncestorUnids for the content in the text box will be
-            /// incomplete.  We then will need to go through the rComparisonUnitAtomList a second time, processing all of the text boxes.
-
-            /// Note that this makes the basic assumption that a text box can't be nested inside of a text box, which, as far as I know, is a good assumption.
-
-            /// This also makes the basic assumption that an endnote / footnote can't contain a text box, which I believe is a good assumption.
-
+            // If the following loop finds a pPr that is in a text box, then continue on, processing the pPr and all of its contents as though it were
+            // content in the containing text box.  This is going to leave it after this loop where the AncestorUnids for the content in the text box will be
+            // incomplete.  We then will need to go through the rComparisonUnitAtomList a second time, processing all of the text boxes.
+            // Note that this makes the basic assumption that a text box can't be nested inside of a text box, which, as far as I know, is a good assumption.
+            // This also makes the basic assumption that an endnote / footnote can't contain a text box, which I believe is a good assumption.
 
             string[] currentAncestorUnids = null;
             foreach (var cua in rComparisonUnitAtomList)
@@ -3778,8 +3751,7 @@ namespace OpenXmlPowerTools
             }
             if (settings.CaseInsensitive || settings.ConflateBreakingAndNonbreakingSpaces)
             {
-                var xt = node as XText;
-                if (xt != null)
+                if (node is XText xt)
                 {
                     var text = xt.Value;
                     if (settings.CaseInsensitive)
@@ -3811,23 +3783,25 @@ namespace OpenXmlPowerTools
                     .TakeWhile(pair => pair.Pu1.SHA1Hash == pair.Pu2.SHA1Hash)
                     .Count();
 
-            if (countCommonAtBeginning != 0 && ((double)countCommonAtBeginning / (double)lengthToCompare) < settings.DetailThreshold)
+            if (countCommonAtBeginning != 0 && (countCommonAtBeginning / lengthToCompare) < settings.DetailThreshold)
                 countCommonAtBeginning = 0;
 
             if (countCommonAtBeginning != 0)
             {
                 var newSequence = new List<CorrelatedSequence>();
 
-                CorrelatedSequence csEqual = new CorrelatedSequence();
-                csEqual.CorrelationStatus = CorrelationStatus.Equal;
-                csEqual.ComparisonUnitArray1 = unknown
-                    .ComparisonUnitArray1
-                    .Take(countCommonAtBeginning)
-                    .ToArray();
-                csEqual.ComparisonUnitArray2 = unknown
-                    .ComparisonUnitArray2
-                    .Take(countCommonAtBeginning)
-                    .ToArray();
+                var csEqual = new CorrelatedSequence
+                {
+                    CorrelationStatus = CorrelationStatus.Equal,
+                    ComparisonUnitArray1 = unknown
+                        .ComparisonUnitArray1
+                        .Take(countCommonAtBeginning)
+                        .ToArray(),
+                    ComparisonUnitArray2 = unknown
+                        .ComparisonUnitArray2
+                        .Take(countCommonAtBeginning)
+                        .ToArray()
+                };
                 newSequence.Add(csEqual);
 
                 var remainingLeft = unknown.ComparisonUnitArray1.Length - countCommonAtBeginning;
@@ -3835,26 +3809,27 @@ namespace OpenXmlPowerTools
 
                 if (remainingLeft != 0 && remainingRight == 0)
                 {
-                    CorrelatedSequence csDeleted = new CorrelatedSequence();
-                    csDeleted.CorrelationStatus = CorrelationStatus.Deleted;
-                    csDeleted.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(countCommonAtBeginning).ToArray();
-                    csDeleted.ComparisonUnitArray2 = null;
+                    var csDeleted = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Deleted,
+                        ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(countCommonAtBeginning).ToArray(),
+                        ComparisonUnitArray2 = null
+                    };
                     newSequence.Add(csDeleted);
                 }
                 else if (remainingLeft == 0 && remainingRight != 0)
                 {
-                    CorrelatedSequence csInserted = new CorrelatedSequence();
-                    csInserted.CorrelationStatus = CorrelationStatus.Inserted;
-                    csInserted.ComparisonUnitArray1 = null;
-                    csInserted.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(countCommonAtBeginning).ToArray();
+                    var csInserted = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Inserted,
+                        ComparisonUnitArray1 = null,
+                        ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(countCommonAtBeginning).ToArray()
+                    };
                     newSequence.Add(csInserted);
                 }
                 else if (remainingLeft != 0 && remainingRight != 0)
                 {
-                    var first1 = unknown.ComparisonUnitArray1[0] as ComparisonUnitWord;
-                    var first2 = unknown.ComparisonUnitArray2[0] as ComparisonUnitWord;
-
-                    if (first1 != null && first2 != null)
+                    if (unknown.ComparisonUnitArray1[0] is ComparisonUnitWord first1 && unknown.ComparisonUnitArray2[0] is ComparisonUnitWord first2)
                     {
                         // if operating at the word level and
                         //   if the last word on the left != pPr && last word on right != pPr
@@ -3885,25 +3860,31 @@ namespace OpenXmlPowerTools
                             var split2 = SplitAtParagraphMark(remainingInRight);
                             if (split1.Count() == 1 && split2.Count() == 1)
                             {
-                                CorrelatedSequence csUnknown2 = new CorrelatedSequence();
-                                csUnknown2.CorrelationStatus = CorrelationStatus.Unknown;
-                                csUnknown2.ComparisonUnitArray1 = split1.First();
-                                csUnknown2.ComparisonUnitArray2 = split2.First();
+                                var csUnknown2 = new CorrelatedSequence
+                                {
+                                    CorrelationStatus = CorrelationStatus.Unknown,
+                                    ComparisonUnitArray1 = split1.First(),
+                                    ComparisonUnitArray2 = split2.First()
+                                };
                                 newSequence.Add(csUnknown2);
                                 return newSequence;
                             }
                             else if (split1.Count == 2 && split2.Count == 2)
                             {
-                                CorrelatedSequence csUnknown2 = new CorrelatedSequence();
-                                csUnknown2.CorrelationStatus = CorrelationStatus.Unknown;
-                                csUnknown2.ComparisonUnitArray1 = split1.First();
-                                csUnknown2.ComparisonUnitArray2 = split2.First();
+                                var csUnknown2 = new CorrelatedSequence
+                                {
+                                    CorrelationStatus = CorrelationStatus.Unknown,
+                                    ComparisonUnitArray1 = split1.First(),
+                                    ComparisonUnitArray2 = split2.First()
+                                };
                                 newSequence.Add(csUnknown2);
 
-                                CorrelatedSequence csUnknown3 = new CorrelatedSequence();
-                                csUnknown3.CorrelationStatus = CorrelationStatus.Unknown;
-                                csUnknown3.ComparisonUnitArray1 = split1.Skip(1).First();
-                                csUnknown3.ComparisonUnitArray2 = split2.Skip(1).First();
+                                var csUnknown3 = new CorrelatedSequence
+                                {
+                                    CorrelationStatus = CorrelationStatus.Unknown,
+                                    ComparisonUnitArray1 = split1.Skip(1).First(),
+                                    ComparisonUnitArray2 = split2.Skip(1).First()
+                                };
                                 newSequence.Add(csUnknown3);
 
                                 return newSequence;
@@ -3911,10 +3892,12 @@ namespace OpenXmlPowerTools
                         }
                     }
 
-                    CorrelatedSequence csUnknown = new CorrelatedSequence();
-                    csUnknown.CorrelationStatus = CorrelationStatus.Unknown;
-                    csUnknown.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(countCommonAtBeginning).ToArray();
-                    csUnknown.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(countCommonAtBeginning).ToArray();
+                    var csUnknown = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Unknown,
+                        ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(countCommonAtBeginning).ToArray(),
+                        ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(countCommonAtBeginning).ToArray()
+                    };
                     newSequence.Add(csUnknown);
                 }
                 else if (remainingLeft == 0 && remainingRight == 0)
@@ -3957,16 +3940,14 @@ namespace OpenXmlPowerTools
                     .Take(countCommonAtEnd)
                     .LastOrDefault();
 
-                var firstCommonWord = firstCommon as ComparisonUnitWord;
-                if (firstCommonWord == null)
+                if (firstCommon is not ComparisonUnitWord firstCommonWord)
                     break;
 
                 // if the word contains more than one atom, then not a paragraph mark
                 if (firstCommonWord.Contents.Count() != 1)
                     break;
 
-                var firstCommonAtom = firstCommonWord.Contents.First() as ComparisonUnitAtom;
-                if (firstCommonAtom == null)
+                if (firstCommonWord.Contents.First() is not ComparisonUnitAtom firstCommonAtom)
                     break;
 
                 if (firstCommonAtom.ContentElement.Name != W.pPr)
@@ -3984,14 +3965,12 @@ namespace OpenXmlPowerTools
                     .Take(countCommonAtEnd)
                     .LastOrDefault();
 
-                var firstCommonWord = firstCommon as ComparisonUnitWord;
-                if (firstCommonWord != null)
+                if (firstCommon is ComparisonUnitWord firstCommonWord)
                 {
                     // if the word contains more than one atom, then not a paragraph mark
                     if (firstCommonWord.Contents.Count() == 1)
                     {
-                        var firstCommonAtom = firstCommonWord.Contents.First() as ComparisonUnitAtom;
-                        if (firstCommonAtom != null)
+                        if (firstCommonWord.Contents.First() is ComparisonUnitAtom firstCommonAtom)
                         {
                             if (firstCommonAtom.ContentElement.Name == W.pPr)
                                 isOnlyParagraphMark = true;
@@ -4013,16 +3992,12 @@ namespace OpenXmlPowerTools
                     .Take(countCommonAtEnd)
                     .FirstOrDefault();
 
-                var firstCommonWord = firstCommon as ComparisonUnitWord;
-                var secondCommonWord = secondCommon as ComparisonUnitWord;
-                if (firstCommonWord != null && secondCommonWord != null)
+                if (firstCommon is ComparisonUnitWord firstCommonWord && secondCommon is ComparisonUnitWord secondCommonWord)
                 {
                     // if the word contains more than one atom, then not a paragraph mark
                     if (firstCommonWord.Contents.Count() == 1 && secondCommonWord.Contents.Count() == 1)
                     {
-                        var firstCommonAtom = firstCommonWord.Contents.First() as ComparisonUnitAtom;
-                        var secondCommonAtom = secondCommonWord.Contents.First() as ComparisonUnitAtom;
-                        if (firstCommonAtom != null && secondCommonAtom != null)
+                        if (firstCommonWord.Contents.First() is ComparisonUnitAtom firstCommonAtom && secondCommonWord.Contents.First() is ComparisonUnitAtom secondCommonAtom)
                         {
                             if (secondCommonAtom.ContentElement.Name == W.pPr)
                                 isOnlyParagraphMark = true;
@@ -4031,7 +4006,7 @@ namespace OpenXmlPowerTools
                 }
             }
 
-            if (!isOnlyParagraphMark && countCommonAtEnd != 0 && ((double)countCommonAtEnd / (double)lengthToCompare) < settings.DetailThreshold)
+            if (!isOnlyParagraphMark && countCommonAtEnd != 0 && (countCommonAtEnd / lengthToCompare) < settings.DetailThreshold)
                 countCommonAtEnd = 0;
 
             // If the following test is not there, the test below sets the end paragraph mark of the entire document equal to the end paragraph
@@ -4076,7 +4051,7 @@ namespace OpenXmlPowerTools
                         .Skip(countCommonAtEnd)
                         .TakeWhile(cu =>
                         {
-                            if (!(cu is ComparisonUnitWord))
+                            if (cu is not ComparisonUnitWord)
                                 return false;
                             var firstComparisonUnitAtom = cu.Contents.OfType<ComparisonUnitAtom>().FirstOrDefault();
                             if (firstComparisonUnitAtom == null)
@@ -4090,7 +4065,7 @@ namespace OpenXmlPowerTools
                             .Skip(countCommonAtEnd)
                             .TakeWhile(cu =>
                             {
-                                if (!(cu is ComparisonUnitWord))
+                                if (cu is not ComparisonUnitWord)
                                     return false;
                                 var firstComparisonUnitAtom = cu.Contents.OfType<ComparisonUnitAtom>().FirstOrDefault();
                                 if (firstComparisonUnitAtom == null)
@@ -4108,26 +4083,32 @@ namespace OpenXmlPowerTools
 
                 if (beforeCommonParagraphLeft != 0 && beforeCommonParagraphRight == 0)
                 {
-                    CorrelatedSequence csDeleted = new CorrelatedSequence();
-                    csDeleted.CorrelationStatus = CorrelationStatus.Deleted;
-                    csDeleted.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Take(beforeCommonParagraphLeft).ToArray();
-                    csDeleted.ComparisonUnitArray2 = null;
+                    var csDeleted = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Deleted,
+                        ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Take(beforeCommonParagraphLeft).ToArray(),
+                        ComparisonUnitArray2 = null
+                    };
                     newSequence.Add(csDeleted);
                 }
                 else if (beforeCommonParagraphLeft == 0 && beforeCommonParagraphRight != 0)
                 {
-                    CorrelatedSequence csInserted = new CorrelatedSequence();
-                    csInserted.CorrelationStatus = CorrelationStatus.Inserted;
-                    csInserted.ComparisonUnitArray1 = null;
-                    csInserted.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Take(beforeCommonParagraphRight).ToArray();
+                    var csInserted = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Inserted,
+                        ComparisonUnitArray1 = null,
+                        ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Take(beforeCommonParagraphRight).ToArray()
+                    };
                     newSequence.Add(csInserted);
                 }
                 else if (beforeCommonParagraphLeft != 0 && beforeCommonParagraphRight != 0)
                 {
-                    CorrelatedSequence csUnknown = new CorrelatedSequence();
-                    csUnknown.CorrelationStatus = CorrelationStatus.Unknown;
-                    csUnknown.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Take(beforeCommonParagraphLeft).ToArray();
-                    csUnknown.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Take(beforeCommonParagraphRight).ToArray();
+                    var csUnknown = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Unknown,
+                        ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Take(beforeCommonParagraphLeft).ToArray(),
+                        ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Take(beforeCommonParagraphRight).ToArray()
+                    };
                     newSequence.Add(csUnknown);
                 }
                 else if (beforeCommonParagraphLeft == 0 && beforeCommonParagraphRight == 0)
@@ -4137,26 +4118,32 @@ namespace OpenXmlPowerTools
 
                 if (remainingInLeftParagraph != 0 && remainingInRightParagraph == 0)
                 {
-                    CorrelatedSequence csDeleted = new CorrelatedSequence();
-                    csDeleted.CorrelationStatus = CorrelationStatus.Deleted;
-                    csDeleted.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(beforeCommonParagraphLeft).Take(remainingInLeftParagraph).ToArray();
-                    csDeleted.ComparisonUnitArray2 = null;
+                    var csDeleted = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Deleted,
+                        ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(beforeCommonParagraphLeft).Take(remainingInLeftParagraph).ToArray(),
+                        ComparisonUnitArray2 = null
+                    };
                     newSequence.Add(csDeleted);
                 }
                 else if (remainingInLeftParagraph == 0 && remainingInRightParagraph != 0)
                 {
-                    CorrelatedSequence csInserted = new CorrelatedSequence();
-                    csInserted.CorrelationStatus = CorrelationStatus.Inserted;
-                    csInserted.ComparisonUnitArray1 = null;
-                    csInserted.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(beforeCommonParagraphRight).Take(remainingInRightParagraph).ToArray();
+                    var csInserted = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Inserted,
+                        ComparisonUnitArray1 = null,
+                        ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(beforeCommonParagraphRight).Take(remainingInRightParagraph).ToArray()
+                    };
                     newSequence.Add(csInserted);
                 }
                 else if (remainingInLeftParagraph != 0 && remainingInRightParagraph != 0)
                 {
-                    CorrelatedSequence csUnknown = new CorrelatedSequence();
-                    csUnknown.CorrelationStatus = CorrelationStatus.Unknown;
-                    csUnknown.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(beforeCommonParagraphLeft).Take(remainingInLeftParagraph).ToArray();
-                    csUnknown.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(beforeCommonParagraphRight).Take(remainingInRightParagraph).ToArray();
+                    var csUnknown = new CorrelatedSequence
+                    {
+                        CorrelationStatus = CorrelationStatus.Unknown,
+                        ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(beforeCommonParagraphLeft).Take(remainingInLeftParagraph).ToArray(),
+                        ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(beforeCommonParagraphRight).Take(remainingInRightParagraph).ToArray()
+                    };
                     newSequence.Add(csUnknown);
                 }
                 else if (remainingInLeftParagraph == 0 && remainingInRightParagraph == 0)
@@ -4164,10 +4151,12 @@ namespace OpenXmlPowerTools
                     // nothing to do
                 }
 
-                CorrelatedSequence csEqual = new CorrelatedSequence();
-                csEqual.CorrelationStatus = CorrelationStatus.Equal;
-                csEqual.ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(unknown.ComparisonUnitArray1.Length - countCommonAtEnd).ToArray();
-                csEqual.ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(unknown.ComparisonUnitArray2.Length - countCommonAtEnd).ToArray();
+                var csEqual = new CorrelatedSequence
+                {
+                    CorrelationStatus = CorrelationStatus.Equal,
+                    ComparisonUnitArray1 = unknown.ComparisonUnitArray1.Skip(unknown.ComparisonUnitArray1.Length - countCommonAtEnd).ToArray(),
+                    ComparisonUnitArray2 = unknown.ComparisonUnitArray2.Skip(unknown.ComparisonUnitArray2.Length - countCommonAtEnd).ToArray()
+                };
                 newSequence.Add(csEqual);
 
                 return newSequence;
@@ -4605,10 +4594,10 @@ namespace OpenXmlPowerTools
                                         var openXmlPartInNewDocument = part;
                                         return gc.Select(gce =>
                                         {
-                                            Package packageOfDeletedContent = openXmlPartOfDeletedContent.OpenXmlPackage.Package;
-                                            Package packageOfNewContent = openXmlPartInNewDocument.OpenXmlPackage.Package;
-                                            PackagePart partInDeletedDocument = packageOfDeletedContent.GetPart(part.Uri);
-                                            PackagePart partInNewDocument = packageOfNewContent.GetPart(part.Uri);
+                                            var packageOfDeletedContent = openXmlPartOfDeletedContent.OpenXmlPackage.GetPackage();
+                                            var packageOfNewContent = openXmlPartInNewDocument.OpenXmlPackage.GetPackage();
+                                            var partInDeletedDocument = packageOfDeletedContent.GetPart(part.Uri);
+                                            var partInNewDocument = packageOfNewContent.GetPart(part.Uri);
                                             return MoveRelatedPartsToDestination(partInDeletedDocument, partInNewDocument, newDrawing);
                                         });
                                     });
@@ -4624,10 +4613,10 @@ namespace OpenXmlPowerTools
                                         var openXmlPartInNewDocument = part;
                                         return gc.Select(gce =>
                                         {
-                                            Package packageOfSourceContent = openXmlPartOfInsertedContent.OpenXmlPackage.Package;
-                                            Package packageOfNewContent = openXmlPartInNewDocument.OpenXmlPackage.Package;
-                                            PackagePart partInDeletedDocument = packageOfSourceContent.GetPart(part.Uri);
-                                            PackagePart partInNewDocument = packageOfNewContent.GetPart(part.Uri);
+                                            var packageOfSourceContent = openXmlPartOfInsertedContent.OpenXmlPackage.GetPackage();
+                                            var packageOfNewContent = openXmlPartInNewDocument.OpenXmlPackage.GetPackage();
+                                            var partInDeletedDocument = packageOfSourceContent.GetPart(part.Uri);
+                                            var partInNewDocument = packageOfNewContent.GetPart(part.Uri);
                                             return MoveRelatedPartsToDestination(partInDeletedDocument, partInNewDocument, newDrawing);
                                         });
                                     });
@@ -4740,8 +4729,7 @@ namespace OpenXmlPowerTools
             return elementList;
         }
 
-        private static XElement MoveRelatedPartsToDestination(PackagePart partOfDeletedContent, PackagePart partInNewDocument,
-            XElement contentElement)
+        private static XElement MoveRelatedPartsToDestination(IPackagePart partOfDeletedContent, IPackagePart partInNewDocument, XElement contentElement)
         {
             var elementsToUpdate = contentElement
                 .Descendants()
@@ -4758,12 +4746,10 @@ namespace OpenXmlPowerTools
                 {
                     var rId = (string)att;
 
-                    var relationshipForDeletedPart = partOfDeletedContent.GetRelationship(rId);
-                    if (relationshipForDeletedPart == null)
-                        throw new FileFormatException("Invalid document");
+                    var relationshipForDeletedPart = partOfDeletedContent.Relationships.FirstOrDefault(x => x.Id == rId)
+                        ?? throw new FileFormatException("Invalid document");
 
                     var tartString = relationshipForDeletedPart.TargetUri.ToString();
-
                     Uri targetUri;
                     try
                     {
@@ -4772,7 +4758,7 @@ namespace OpenXmlPowerTools
                                 new Uri(partOfDeletedContent.Uri.ToString(), UriKind.RelativeOrAbsolute),
                                     new Uri(tartString, UriKind.RelativeOrAbsolute));
                     }
-                    catch (System.ArgumentException)
+                    catch (ArgumentException)
                     {
                         targetUri = null;
                     }
@@ -4800,24 +4786,26 @@ namespace OpenXmlPowerTools
                         else
                             uri = new Uri(uriString, UriKind.Relative);
 
-                        var newPart = partInNewDocument.Package.CreatePart(uri, relatedPackagePart.ContentType);
-                        using (var oldPartStream = relatedPackagePart.GetStream())
-                        using (var newPartStream = newPart.GetStream())
+                        var newPart = partInNewDocument.Package.CreatePart(uri, relatedPackagePart.ContentType, CompressionOption.Normal);
+
+                        using (var oldPartStream = relatedPackagePart.GetStream(FileMode.Open, FileAccess.Read))
+                        using (var newPartStream = newPart.GetStream(FileMode.Create, FileAccess.Write))
                             FileUtils.CopyStream(oldPartStream, newPartStream);
 
                         var newRid = "R" + Guid.NewGuid().ToString().Replace("-", "");
-                        partInNewDocument.CreateRelationship(newPart.Uri, TargetMode.Internal, relationshipForDeletedPart.RelationshipType, newRid);
+                        partInNewDocument.Relationships.Create(newPart.Uri, TargetMode.Internal, relationshipForDeletedPart.RelationshipType, newRid);
                         att.Value = newRid;
 
                         if (newPart.ContentType.EndsWith("xml"))
                         {
                             XDocument newPartXDoc = null;
-                            using (var stream = newPart.GetStream())
+                            using (var stream = newPart.GetStream(FileMode.Open, FileAccess.Read))
                             {
                                 newPartXDoc = XDocument.Load(stream);
                                 MoveRelatedPartsToDestination(relatedPackagePart, newPart, newPartXDoc.Root);
                             }
-                            using (var stream = newPart.GetStream())
+
+                            using (var stream = newPart.GetStream(FileMode.Create, FileAccess.Write))
                                 newPartXDoc.Save(stream);
                         }
                     }
@@ -4858,7 +4846,7 @@ namespace OpenXmlPowerTools
             return reconstructedElement;
         }
 
-        private static List<CorrelatedSequence> DetectUnrelatedSources(ComparisonUnit[] cu1, ComparisonUnit[] cu2, WmlComparerSettings settings)
+        private static List<CorrelatedSequence> DetectUnrelatedSources(ComparisonUnit[] cu1, ComparisonUnit[] cu2)
         {
             if (cu1.OfType<ComparisonUnitGroup>().Take(4).Count() > 3 &&
                 cu2.OfType<ComparisonUnitGroup>().Take(4).Count() > 3)
@@ -4941,10 +4929,7 @@ namespace OpenXmlPowerTools
                     if (newSequence == null)
                     {
                         newSequence = FindCommonAtBeginningAndEnd(unknown, settings);
-                        if (newSequence == null)
-                        {
-                            newSequence = DoLcsAlgorithm(unknown, settings);
-                        }
+                        newSequence ??= DoLcsAlgorithm(unknown, settings);
                     }
 
                     var indexOfUnknown = csList.IndexOf(unknown);

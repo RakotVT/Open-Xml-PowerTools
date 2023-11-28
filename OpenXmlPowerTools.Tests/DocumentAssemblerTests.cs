@@ -1,14 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
@@ -142,9 +137,9 @@ namespace OxPt
 #if false
                     StringBuilder sb = new StringBuilder();
                     foreach (var item in valErrors.Select(r => r.Description).OrderBy(t => t).Distinct())
-	                {
-		                sb.Append(item).Append(Environment.NewLine);
-	                }
+                    {
+                        sb.Append(item).Append(Environment.NewLine);
+                    }
                     string z = sb.ToString();
                     Console.WriteLine(z);
 #endif

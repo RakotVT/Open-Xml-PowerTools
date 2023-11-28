@@ -3,18 +3,17 @@
 
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
+
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using OpenXmlPowerTools;
 using Xunit;
 using System.Diagnostics;
+using SkiaSharp;
 
 /****************************************************************************************************************/
 // Large tests have been commented out below.  If and when there is an effort to improve performance for WmlComparer,
@@ -157,7 +156,7 @@ namespace OxPt
                     return new WmlRevisedDocumentInfo()
                     {
                         RevisedDocument = new WmlDocument(revisedCopiedToDestDocx.FullName),
-                        Color = ColorParser.FromName(z.Element("Color")?.Value),
+                        Color = SKColor.Parse(z.Element("Color")?.Value),
                         Revisor = z.Element("Revisor")?.Value,
                     };
                 })
@@ -409,7 +408,7 @@ namespace OxPt
                 new WmlRevisedDocumentInfo()
                 {
                     RevisedDocument = source2Wml,
-                    Color = Color.LightBlue,
+                    Color = SKColors.LightBlue,
                     Revisor = "Revised by Eric White",
                 }
             };

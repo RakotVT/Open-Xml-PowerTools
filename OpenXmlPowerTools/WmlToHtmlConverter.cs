@@ -10,6 +10,7 @@ using System.Linq;
 using System.Text;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
+using SkiaSharp;
 
 // 200e lrm - LTR
 // 200f rlm - RTL
@@ -22,13 +23,11 @@ namespace OpenXmlPowerTools
 {
     public partial class WmlDocument
     {
-        [SuppressMessage("ReSharper", "UnusedMember.Global")]
         public XElement ConvertToHtml(WmlToHtmlConverterSettings htmlConverterSettings)
         {
             return WmlToHtmlConverter.ConvertToHtml(this, htmlConverterSettings);
         }
 
-        [SuppressMessage("ReSharper", "UnusedMember.Global")]
         public XElement ConvertToHtml(HtmlConverterSettings htmlConverterSettings)
         {
             WmlToHtmlConverterSettings settings = new WmlToHtmlConverterSettings(htmlConverterSettings);
@@ -36,7 +35,6 @@ namespace OpenXmlPowerTools
         }
     }
 
-    [SuppressMessage("ReSharper", "FieldCanBeMadeReadOnly.Global")]
     public class WmlToHtmlConverterSettings
     {
         public string PageTitle;
@@ -116,11 +114,9 @@ namespace OpenXmlPowerTools
         }
     }
 
-    [SuppressMessage("ReSharper", "NotAccessedField.Global")]
-    [SuppressMessage("ReSharper", "UnusedMember.Global")]
     public class ImageInfo
     {
-        public Bitmap Bitmap;
+        public SKBitmap Bitmap;
         public XAttribute ImgStyleAttribute;
         public string ContentType;
         public XElement DrawingElement;
@@ -1312,7 +1308,7 @@ namespace OpenXmlPowerTools
                 .Select(r => GetFontSize(r))
                 .Max();
             if (sz != null)
-                style.AddIfMissing("font-size", string.Format(NumberFormatInfo.InvariantInfo, "{0}pt", sz / 2.0m));
+                style.AddIfMissing("font-size", string.Format(NumberFormatInfo.InvariantInfo, "{0}pt", sz / 2.0f));
         }
 
         private static void DefineLineHeight(Dictionary<string, string> style, XElement paragraph)
@@ -1456,7 +1452,7 @@ namespace OpenXmlPowerTools
             var languageType = (string)run.Attribute(PtOpenXml.LanguageType);
             var sz = GetFontSize(languageType, rPr);
             if (sz != null)
-                style.AddIfMissing("font-size", string.Format(NumberFormatInfo.InvariantInfo, "{0}pt", sz/2.0m));
+                style.AddIfMissing("font-size", string.Format(NumberFormatInfo.InvariantInfo, "{0}pt", sz/2.0f));
 
             // W.caps
             if (GetBoolProp(rPr, W.caps))
@@ -1503,7 +1499,7 @@ namespace OpenXmlPowerTools
             return style;
         }
 
-        private static decimal? GetFontSize(XElement e)
+        private static float? GetFontSize(XElement e)
         {
             var languageType = (string)e.Attribute(PtOpenXml.LanguageType);
             if (e.Name == W.p)
@@ -1517,12 +1513,12 @@ namespace OpenXmlPowerTools
             return null;
         }
 
-        private static decimal? GetFontSize(string languageType, XElement rPr)
+        private static float? GetFontSize(string languageType, XElement rPr)
         {
             if (rPr == null) return null;
             return languageType == "bidi"
-                ? (decimal?) rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault()
-                : (decimal?) rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
+                ? (float?) rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault()
+                : (float?) rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
         }
 
         private static void DetermineRunMarks(XElement run, XElement rPr, Dictionary<string, string> style, out XEntity runStartMark, out XEntity runEndMark)
@@ -2238,7 +2234,7 @@ namespace OpenXmlPowerTools
             return tabs;
         }
 
-        private static readonly HashSet<string> UnknownFonts = new HashSet<string>();
+        private static readonly HashSet<string> _unknownFonts = new();
         private static HashSet<string> _knownFamilies;
 
         private static HashSet<string> KnownFamilies
@@ -2248,9 +2244,9 @@ namespace OpenXmlPowerTools
                 if (_knownFamilies == null)
                 {
                     _knownFamilies = new HashSet<string>();
-                    var families = FontFamily.Families;
+                    var families = SKFontManager.Default.FontFamilies;
                     foreach (var fam in families)
-                        _knownFamilies.Add(fam.Name);
+                        _knownFamilies.Add(fam);
                 }
                 return _knownFamilies;
             }
@@ -2258,41 +2254,37 @@ namespace OpenXmlPowerTools
 
         private static int CalcWidthOfRunInTwips(XElement r)
         {
-            var fontName = (string)r.Attribute(PtOpenXml.pt + "FontName") ??
-                           (string)r.Ancestors(W.p).First().Attribute(PtOpenXml.pt + "FontName");
-            if (fontName == null)
-                throw new OpenXmlPowerToolsException("Internal Error, should have FontName attribute");
-            if (UnknownFonts.Contains(fontName))
+            var fontName = ((string)r.Attribute(PtOpenXml.pt + "FontName") ??
+                           (string)r.Ancestors(W.p).First().Attribute(PtOpenXml.pt + "FontName"))
+                           ?? throw new OpenXmlPowerToolsException("Internal Error, should have FontName attribute");
+            if (_unknownFonts.Contains(fontName))
                 return 0;
 
-            var rPr = r.Element(W.rPr);
-            if (rPr == null)
-                throw new OpenXmlPowerToolsException("Internal Error, should have run properties");
-
-            var sz = GetFontSize(r) ?? 22m;
+            var rPr = r.Element(W.rPr) ?? throw new OpenXmlPowerToolsException("Internal Error, should have run properties");
+            var sz = GetFontSize(r) ?? 22f;
 
             // unknown font families will throw ArgumentException, in which case just return 0
             if (!KnownFamilies.Contains(fontName))
                 return 0;
 
             // in theory, all unknown fonts are found by the above test, but if not...
-            FontFamily ff;
+            var fs = SKFontStyle.Normal;
+            if (Util.GetBoolProp(rPr, W.b) == true || Util.GetBoolProp(rPr, W.bCs) == true)
+                fs = SKFontStyle.Bold;
+            if (Util.GetBoolProp(rPr, W.i) == true || Util.GetBoolProp(rPr, W.iCs) == true)
+                fs = fs.Equals(SKFontStyle.Bold) ? SKFontStyle.BoldItalic : SKFontStyle.Italic;
+
+            SKTypeface ff;
             try
             {
-                ff = new FontFamily(fontName);
+                ff = SKTypeface.FromFamilyName(fontName, fs);
             }
             catch (ArgumentException)
             {
-                UnknownFonts.Add(fontName);
-
+                _unknownFonts.Add(fontName);
                 return 0;
             }
 
-            var fs = FontStyle.Regular;
-            if (GetBoolProp(rPr, W.b) || GetBoolProp(rPr, W.bCs))
-                fs |= FontStyle.Bold;
-            if (GetBoolProp(rPr, W.i) || GetBoolProp(rPr, W.iCs))
-                fs |= FontStyle.Italic;
 
             // Appended blank as a quick fix to accommodate &nbsp; that will get
             // appended to some layout-critical runs such as list item numbers.
@@ -2331,7 +2323,7 @@ namespace OpenXmlPowerTools
                 runText = sb.ToString();
             }
 
-            var w = MetricsGetter.GetTextWidth(ff, fs, sz, runText);
+            var w = MetricsGetter.GetTextWidth(ff, sz, runText);
 
             return (int)(w / 96m * 1440m / multiplier + tabLength * 1440m);
         }
@@ -2993,7 +2985,7 @@ namespace OpenXmlPowerTools
         // Don't process wmf files (with contentType == "image/x-wmf") because GDI consumes huge amounts
         // of memory when dealing with wmf perhaps because it loads a DLL to do the rendering?
         // It actually works, but is not recommended.
-        private static readonly List<string> ImageContentTypes = new List<string>
+        private static readonly List<string> _imageContentTypes = new()
         {
             "image/png", "image/gif", "image/tiff", "image/jpeg"
         };
@@ -3059,7 +3051,7 @@ namespace OpenXmlPowerTools
             if (imageRid == null) return null;
 
             var pp3 = wordDoc.MainDocumentPart.Parts.FirstOrDefault(pp => pp.RelationshipId == imageRid);
-            if (pp3 == null) return null;
+            if (pp3 == default) return null;
 
             var imagePart = (ImagePart)pp3.OpenXmlPart;
             if (imagePart == null) return null;
@@ -3075,52 +3067,50 @@ namespace OpenXmlPowerTools
             }
 
             var contentType = imagePart.ContentType;
-            if (!ImageContentTypes.Contains(contentType))
+            if (!_imageContentTypes.Contains(contentType))
                 return null;
 
-            using (var partStream = imagePart.GetStream())
-            using (var bitmap = new Bitmap(partStream))
+            using var partStream = imagePart.GetStream();
+            using var bitmap = SKBitmap.Decode(partStream);
+            if (extentCx != null && extentCy != null)
             {
-                if (extentCx != null && extentCy != null)
-                {
-                    var imageInfo = new ImageInfo()
-                    {
-                        Bitmap = bitmap,
-                        ImgStyleAttribute = new XAttribute("style",
-                            string.Format(NumberFormatInfo.InvariantInfo,
-                                "width: {0}in; height: {1}in",
-                                (float)extentCx / (float)ImageInfo.EmusPerInch,
-                                (float)extentCy / (float)ImageInfo.EmusPerInch)),
-                        ContentType = contentType,
-                        DrawingElement = element,
-                        AltText = altText,
-                    };
-                    var imgElement2 = imageHandler(imageInfo);
-                    if (hyperlinkUri != null)
-                    {
-                        return new XElement(XhtmlNoNamespace.a,
-                            new XAttribute(XhtmlNoNamespace.href, hyperlinkUri),
-                            imgElement2);
-                    }
-                    return imgElement2;
-                }
-
-                var imageInfo2 = new ImageInfo()
+                var imageInfo = new ImageInfo()
                 {
                     Bitmap = bitmap,
+                    ImgStyleAttribute = new XAttribute("style",
+                        string.Format(NumberFormatInfo.InvariantInfo,
+                            "width: {0}in; height: {1}in",
+                            (float)extentCx / ImageInfo.EmusPerInch,
+                            (float)extentCy / ImageInfo.EmusPerInch)),
                     ContentType = contentType,
                     DrawingElement = element,
                     AltText = altText,
                 };
-                var imgElement = imageHandler(imageInfo2);
+                var imgElement2 = imageHandler(imageInfo);
                 if (hyperlinkUri != null)
                 {
                     return new XElement(XhtmlNoNamespace.a,
                         new XAttribute(XhtmlNoNamespace.href, hyperlinkUri),
-                        imgElement);
+                        imgElement2);
                 }
-                return imgElement;
+                return imgElement2;
             }
+
+            var imageInfo2 = new ImageInfo()
+            {
+                Bitmap = bitmap,
+                ContentType = contentType,
+                DrawingElement = element,
+                AltText = altText,
+            };
+            var imgElement = imageHandler(imageInfo2);
+            if (hyperlinkUri != null)
+            {
+                return new XElement(XhtmlNoNamespace.a,
+                    new XAttribute(XhtmlNoNamespace.href, hyperlinkUri),
+                    imgElement);
+            }
+            return imgElement;
         }
 
         private static XElement ProcessPictureOrObject(WordprocessingDocument wordDoc,
@@ -3132,52 +3122,48 @@ namespace OpenXmlPowerTools
             try
             {
                 var pp = wordDoc.MainDocumentPart.Parts.FirstOrDefault(pp2 => pp2.RelationshipId == imageRid);
-                if (pp == null) return null;
+                if (pp == default) return null;
 
                 var imagePart = (ImagePart)pp.OpenXmlPart;
                 if (imagePart == null) return null;
 
                 var contentType = imagePart.ContentType;
-                if (!ImageContentTypes.Contains(contentType))
+                if (!_imageContentTypes.Contains(contentType))
                     return null;
 
-                using (var partStream = imagePart.GetStream())
+                using var partStream = imagePart.GetStream();
+                try
                 {
-                    try
+                    using var bitmap = SKBitmap.Decode(partStream);
+                    var imageInfo = new ImageInfo()
                     {
-                        using (var bitmap = new Bitmap(partStream))
-                        {
-                            var imageInfo = new ImageInfo()
-                            {
-                                Bitmap = bitmap,
-                                ContentType = contentType,
-                                DrawingElement = element
-                            };
+                        Bitmap = bitmap,
+                        ContentType = contentType,
+                        DrawingElement = element
+                    };
 
-                            var style = (string)element.Elements(VML.shape).Attributes("style").FirstOrDefault();
-                            if (style == null) return imageHandler(imageInfo);
+                    var style = (string)element.Elements(VML.shape).Attributes("style").FirstOrDefault();
+                    if (style == null) return imageHandler(imageInfo);
 
-                            var tokens = style.Split(';');
-                            var widthInPoints = WidthInPoints(tokens);
-                            var heightInPoints = HeightInPoints(tokens);
-                            if (widthInPoints != null && heightInPoints != null)
-                            {
-                                imageInfo.ImgStyleAttribute = new XAttribute("style",
-                                    string.Format(NumberFormatInfo.InvariantInfo,
-                                        "width: {0}pt; height: {1}pt", widthInPoints, heightInPoints));
-                            }
-                            return imageHandler(imageInfo);
-                        }
-                    }
-                    catch (OutOfMemoryException)
+                    var tokens = style.Split(';');
+                    var widthInPoints = WidthInPoints(tokens);
+                    var heightInPoints = HeightInPoints(tokens);
+                    if (widthInPoints != null && heightInPoints != null)
                     {
-                        // the Bitmap class can throw OutOfMemoryException, which means the bitmap is messed up, so punt.
-                        return null;
+                        imageInfo.ImgStyleAttribute = new XAttribute("style",
+                            string.Format(NumberFormatInfo.InvariantInfo,
+                                "width: {0}pt; height: {1}pt", widthInPoints, heightInPoints));
                     }
-                    catch (ArgumentException)
-                    {
-                        return null;
-                    }
+                    return imageHandler(imageInfo);
+                }
+                catch (OutOfMemoryException)
+                {
+                    // the Bitmap class can throw OutOfMemoryException, which means the bitmap is messed up, so punt.
+                    return null;
+                }
+                catch (ArgumentException)
+                {
+                    return null;
                 }
             }
             catch (ArgumentOutOfRangeException)

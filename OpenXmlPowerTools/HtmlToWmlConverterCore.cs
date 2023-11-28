@@ -98,17 +98,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
-using OpenXmlPowerTools;
-using OpenXmlPowerTools.HtmlToWml;
 using OpenXmlPowerTools.HtmlToWml.CSS;
-using System.Text.RegularExpressions;
+using SkiaSharp;
 
 namespace OpenXmlPowerTools.HtmlToWml
 {
@@ -156,26 +152,25 @@ namespace OpenXmlPowerTools.HtmlToWml
             if (emptyDocument == null)
                 emptyDocument = HtmlToWmlConverter.EmptyDocument;
 
-            NextRectId = 1025;
+            _nextRectId = 1025;
 
             // clone and transform all element names to lower case
             XElement html = (XElement)TransformToLower(xhtml);
 
             // add pseudo cells for rowspan
-            html = (XElement)AddPseudoCells(html);
+            html = AddPseudoCells(html);
 
             html = (XElement)TransformWhiteSpaceInPreCodeTtKbdSamp(html, false, false);
 
-            CssDocument defaultCssDoc, userCssDoc, authorCssDoc;
             CssApplier.ApplyAllCss(
                 defaultCss,
                 authorCss,
                 userCss,
                 html,
                 settings,
-                out defaultCssDoc,
-                out authorCssDoc,
-                out userCssDoc,
+                out var defaultCssDoc,
+                out var authorCssDoc,
+                out var userCssDoc,
                 annotatedHtmlDumpFileName);
 
             WmlDocument newWmlDocument;
@@ -645,7 +640,7 @@ namespace OpenXmlPowerTools.HtmlToWml
 
                 AdjustFontAttributes(wDoc, run, pPr, rPr);
                 var csa = new CharStyleAttributes(pPr, rPr);
-                char charToExamine = str.FirstOrDefault(c => !WeakAndNeutralDirectionalCharacters.Contains(c));
+                char charToExamine = str.FirstOrDefault(c => !_weakAndNeutralDirectionalCharacters.Contains(c));
                 if (charToExamine == '\0')
                     charToExamine = str[0];
 
@@ -1142,40 +1137,39 @@ namespace OpenXmlPowerTools.HtmlToWml
                (string)r.Ancestors(W.p).First().Attribute(PtOpenXml.FontName);
             if (fontName == null)
                 throw new OpenXmlPowerToolsException("Internal Error, should have FontName attribute");
-            if (UnknownFonts.Contains(fontName))
+            if (_unknownFonts.Contains(fontName))
                 return 0;
 
-            if (UnknownFonts.Contains(fontName))
+            if (_unknownFonts.Contains(fontName))
                 return null;
 
             var rPr = r.Element(W.rPr);
             if (rPr == null)
                 return null;
 
-            var sz = GetFontSize(r) ?? 22m;
+            var sz = GetFontSize(r) ?? 22f;
 
             // unknown font families will throw ArgumentException, in which case just return 0
             if (!KnownFamilies.Contains(fontName))
                 return 0;
 
             // in theory, all unknown fonts are found by the above test, but if not...
-            FontFamily ff;
+            var fs = SKFontStyle.Normal;
+            if (Util.GetBoolProp(rPr, W.b) == true || Util.GetBoolProp(rPr, W.bCs) == true)
+                fs = SKFontStyle.Bold;
+            if (Util.GetBoolProp(rPr, W.i) == true || Util.GetBoolProp(rPr, W.iCs) == true)
+                fs = fs.Equals(SKFontStyle.Bold) ? SKFontStyle.BoldItalic : SKFontStyle.Italic;
+
+            SKTypeface ff;
             try
             {
-                ff = new FontFamily(fontName);
+                ff = SKTypeface.FromFamilyName(fontName, fs);
             }
             catch (ArgumentException)
             {
-                UnknownFonts.Add(fontName);
-
+                _unknownFonts.Add(fontName);
                 return 0;
             }
-
-            var fs = FontStyle.Regular;
-            if (Util.GetBoolProp(rPr, W.b) == true || Util.GetBoolProp(rPr, W.bCs) == true)
-                fs |= FontStyle.Bold;
-            if (Util.GetBoolProp(rPr, W.i) == true || Util.GetBoolProp(rPr, W.iCs) == true)
-                fs |= FontStyle.Italic;
 
             // Appended blank as a quick fix to accommodate &nbsp; that will get
             // appended to some layout-critical runs such as list item numbers.
@@ -1214,7 +1208,7 @@ namespace OpenXmlPowerTools.HtmlToWml
                 runText = sb.ToString();
             }
 
-            return MetricsGetter.GetTextWidth(ff, fs, sz, runText) / multiplier;
+            return MetricsGetter.GetTextWidth(ff, sz, runText) / multiplier;
         }
 
         // The algorithm for this method comes from the implementer notes in [MS-OI29500].pdf
@@ -1875,7 +1869,7 @@ namespace OpenXmlPowerTools.HtmlToWml
             return FontType.HAnsi;
         }
 
-        private static readonly HashSet<string> UnknownFonts = new HashSet<string>();
+        private static readonly HashSet<string> _unknownFonts = new();
         private static HashSet<string> _knownFamilies;
 
         private static HashSet<string> KnownFamilies
@@ -1885,15 +1879,15 @@ namespace OpenXmlPowerTools.HtmlToWml
                 if (_knownFamilies == null)
                 {
                     _knownFamilies = new HashSet<string>();
-                    var families = FontFamily.Families;
+                    var families = SKFontManager.Default.FontFamilies;
                     foreach (var fam in families)
-                        _knownFamilies.Add(fam.Name);
+                        _knownFamilies.Add(fam);
                 }
                 return _knownFamilies;
             }
         }
 
-        private static HashSet<char> WeakAndNeutralDirectionalCharacters = new HashSet<char>() {
+        private static readonly HashSet<char> _weakAndNeutralDirectionalCharacters = new() {
             '0',
             '1',
             '2',
@@ -2141,7 +2135,7 @@ namespace OpenXmlPowerTools.HtmlToWml
                 .toArray();
             */
 
-            var charToExamine = str.FirstOrDefault(c => !WeakAndNeutralDirectionalCharacters.Contains(c));
+            var charToExamine = str.FirstOrDefault(c => !_weakAndNeutralDirectionalCharacters.Contains(c));
             if (charToExamine == '\0')
                 charToExamine = str[0];
 
@@ -2194,7 +2188,7 @@ namespace OpenXmlPowerTools.HtmlToWml
             }
         }
 
-        private static decimal? GetFontSize(XElement e)
+        private static float? GetFontSize(XElement e)
         {
             var languageType = (string)e.Attribute(PtOpenXml.LanguageType);
             if (e.Name == W.p)
@@ -2208,19 +2202,19 @@ namespace OpenXmlPowerTools.HtmlToWml
             return null;
         }
 
-        private static decimal? GetFontSize(string languageType, XElement rPr)
+        private static float? GetFontSize(string languageType, XElement rPr)
         {
             if (rPr == null) return null;
             return languageType == "bidi"
-                ? (decimal?)rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault()
-                : (decimal?)rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
+                ? (float?)rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault()
+                : (float?)rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
         }
 
-        private static int NextRectId = 1025;
+        private static int _nextRectId = 1025;
 
         private static int GetNextRectId()
         {
-            return NextRectId++;
+            return _nextRectId++;
         }
 
         private static object GenerateNextExpected(XNode node, HtmlToWmlConverterSettings settings, WordprocessingDocument wDoc,
@@ -2228,8 +2222,7 @@ namespace OpenXmlPowerTools.HtmlToWml
         {
             if (nextExpected == NextExpected.Paragraph)
             {
-                XElement element = node as XElement;
-                if (element != null)
+                if (node is XElement element)
                 {
                     return new XElement(W.p,
                         GetParagraphProperties(element, styleName, settings),
@@ -2237,8 +2230,7 @@ namespace OpenXmlPowerTools.HtmlToWml
                 }
                 else
                 {
-                    XText xTextNode = node as XText;
-                    if (xTextNode != null)
+                    if (node is XText xTextNode)
                     {
                         string textNodeString = GetDisplayText(xTextNode, preserveWhiteSpace);
                         XElement p;
@@ -2278,25 +2270,21 @@ namespace OpenXmlPowerTools.HtmlToWml
         private static XElement TransformImageToWml(XElement element, HtmlToWmlConverterSettings settings, WordprocessingDocument wDoc)
         {
             string srcAttribute = (string)element.Attribute(XhtmlNoNamespace.src);
-            byte[] ba = null;
-            Bitmap bmp = null;
-
+            byte[] ba;
+            SKBitmap bmp;
             if (srcAttribute.StartsWith("data:"))
             {
                 var semiIndex = srcAttribute.IndexOf(';');
                 var commaIndex = srcAttribute.IndexOf(',', semiIndex);
                 var base64 = srcAttribute.Substring(commaIndex + 1);
                 ba = Convert.FromBase64String(base64);
-                using (MemoryStream ms = new MemoryStream(ba))
-                {
-                    bmp = new Bitmap(ms);
-                }
+                bmp = SKBitmap.Decode(ba);
             }
             else
             {
                 try
                 {
-                    bmp = new Bitmap(settings.BaseUriForImages + "/" + srcAttribute);
+                    bmp = SKBitmap.Decode(settings.BaseUriForImages + "/" + srcAttribute);
                 }
                 catch (ArgumentException)
                 {
@@ -2306,14 +2294,12 @@ namespace OpenXmlPowerTools.HtmlToWml
                 {
                     return null;
                 }
-                MemoryStream ms = new MemoryStream();
-                bmp.Save(ms, bmp.RawFormat);
-                ba = ms.ToArray();
+                ba = bmp.Bytes;
             }
 
             MainDocumentPart mdp = wDoc.MainDocumentPart;
             string rId = "R" + Guid.NewGuid().ToString().Replace("-", "");
-            ImagePartType ipt = ImagePartType.Png;
+            var ipt = ImagePartType.Png;
             ImagePart newPart = mdp.AddImagePart(ipt, rId);
             using (Stream s = newPart.GetStream(FileMode.Create, FileAccess.ReadWrite))
                 s.Write(ba, 0, ba.GetUpperBound(0) + 1);
@@ -2338,7 +2324,7 @@ namespace OpenXmlPowerTools.HtmlToWml
                 XElement run = new XElement(W.r,
                     GetRunPropertiesForImage(),
                     new XElement(W.drawing,
-                        GetImageAsInline(element, settings, wDoc, bmp, rId, pictureId, pictureDescription)));
+                        GetImageAsInline(element, bmp, rId, pictureId, pictureDescription)));
                 return run;
             }
             if (floatValue == "left" || floatValue == "right")
@@ -2346,14 +2332,14 @@ namespace OpenXmlPowerTools.HtmlToWml
                 XElement run = new XElement(W.r,
                     GetRunPropertiesForImage(),
                     new XElement(W.drawing,
-                        GetImageAsAnchor(element, settings, wDoc, bmp, rId, floatValue, pictureId, pictureDescription)));
+                        GetImageAsAnchor(element, settings, bmp, rId, floatValue, pictureId, pictureDescription)));
                 return run;
             }
             return null;
         }
 
-        private static XElement GetImageAsInline(XElement element, HtmlToWmlConverterSettings settings, WordprocessingDocument wDoc, Bitmap bmp,
-            string rId, int pictureId, string pictureDescription)
+        private static XElement GetImageAsInline(XElement element, SKBitmap bmp, string rId, int pictureId,
+            string pictureDescription)
         {
             XElement inline = new XElement(WP.inline, // 20.4.2.8
                 new XAttribute(XNamespace.Xmlns + "wp", WP.wp.NamespaceName),
@@ -2369,8 +2355,8 @@ namespace OpenXmlPowerTools.HtmlToWml
             return inline;
         }
 
-        private static XElement GetImageAsAnchor(XElement element, HtmlToWmlConverterSettings settings, WordprocessingDocument wDoc, Bitmap bmp,
-            string rId, string floatValue, int pictureId, string pictureDescription)
+        private static XElement GetImageAsAnchor(XElement element, HtmlToWmlConverterSettings settings, SKBitmap bmp, string rId,
+            string floatValue, int pictureId, string pictureDescription)
         {
             Emu minDistFromEdge = (long)(0.125 * Emu.s_EmusPerInch);
             long relHeight = 251658240;  // z-order
@@ -2410,7 +2396,7 @@ namespace OpenXmlPowerTools.HtmlToWml
             {
                 Emu printWidth = (long)settings.PageWidthEmus - (long)settings.PageMarginLeftEmus - (long)settings.PageMarginRightEmus;
                 SizeEmu sl = GetImageSizeInEmus(element, bmp);
-                relativeFromColumn = printWidth - sl.m_Width;
+                relativeFromColumn = printWidth - sl.Width;
                 if (marginRightProp.IsNotAuto)
                     relativeFromColumn -= (long)(Emu)marginRightInEmus;
                 CssExpression parentMarginRight = element.Parent.GetProp("margin-right");
@@ -2550,13 +2536,10 @@ namespace OpenXmlPowerTools.HtmlToWml
                 new XElement(W.noProof));
         }
 
-        private static SizeEmu GetImageSizeInEmus(XElement img, Bitmap bmp)
+        private static SizeEmu GetImageSizeInEmus(XElement img, SKBitmap bmp)
         {
-            double hres = bmp.HorizontalResolution;
-            double vres = bmp.VerticalResolution;
-            Size s = bmp.Size;
-            Emu cx = (long)((double)(s.Width / hres) * (double)Emu.s_EmusPerInch);
-            Emu cy = (long)((double)(s.Height / vres) * (double)Emu.s_EmusPerInch);
+            Emu cx = (long)Emu.PointsToEmus(bmp.Width);
+            Emu cy = (long)Emu.PointsToEmus(bmp.Height);
 
             CssExpression width = img.GetProp("width");
             CssExpression height = img.GetProp("height");
@@ -2583,12 +2566,12 @@ namespace OpenXmlPowerTools.HtmlToWml
             return new SizeEmu(cx, cy);
         }
 
-        private static XElement GetImageExtent(XElement img, Bitmap bmp)
+        private static XElement GetImageExtent(XElement img, SKBitmap bmp)
         {
             SizeEmu szEmu = GetImageSizeInEmus(img, bmp);
             return new XElement(WP.extent,
-                new XAttribute(NoNamespace.cx, (long)szEmu.m_Width),   // in EMUs
-                new XAttribute(NoNamespace.cy, (long)szEmu.m_Height)); // in EMUs
+                new XAttribute(NoNamespace.cx, (long)szEmu.Width),   // in EMUs
+                new XAttribute(NoNamespace.cy, (long)szEmu.Height)); // in EMUs
         }
 
         private static XElement GetEffectExtent()
@@ -2616,7 +2599,7 @@ namespace OpenXmlPowerTools.HtmlToWml
                     new XAttribute(NoNamespace.noChangeAspect, 1)));
         }
 
-        private static XElement GetGraphicForImage(XElement element, string rId, Bitmap bmp, int pictureId, string pictureDescription)
+        private static XElement GetGraphicForImage(XElement element, string rId, SKBitmap bmp, int pictureId, string pictureDescription)
         {
             SizeEmu szEmu = GetImageSizeInEmus(element, bmp);
             XElement graphic = new XElement(A.graphic,
@@ -2648,7 +2631,7 @@ namespace OpenXmlPowerTools.HtmlToWml
                             new XAttribute(NoNamespace.bwMode, "auto"),
                             new XElement(A.xfrm,
                                 new XElement(A.off, new XAttribute(NoNamespace.x, 0), new XAttribute(NoNamespace.y, 0)),
-                                new XElement(A.ext, new XAttribute(NoNamespace.cx, (long)szEmu.m_Width), new XAttribute(NoNamespace.cy, (long)szEmu.m_Height))),
+                                new XElement(A.ext, new XAttribute(NoNamespace.cx, (long)szEmu.Width), new XAttribute(NoNamespace.cy, (long)szEmu.Height))),
                             new XElement(A.prstGeom, new XAttribute(NoNamespace.prst, "rect"),
                                 new XElement(A.avLst)),
                             new XElement(A.noFill),
@@ -4127,9 +4110,9 @@ namespace OpenXmlPowerTools.HtmlToWml
             if (fontSize.Terms.Count() == 1)
             {
                 CssTerm term = fontSize.Terms.First();
-                double size = 0;
                 if (term.Unit == CssUnit.PT)
                 {
+                    double size;
                     if (double.TryParse(term.Value, out size))
                         return new TPoint(size);
                     return null;

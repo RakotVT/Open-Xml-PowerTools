@@ -12,9 +12,7 @@ using System.Linq;
 using System.Xml.Linq;
 using System.Collections.Generic;
 using DocumentFormat.OpenXml.Packaging;
-using System.Drawing;
-using Font = System.Drawing.Font;
-using FontFamily = System.Drawing.FontFamily;
+using SkiaSharp;
 
 // ReSharper disable InconsistentNaming
 
@@ -607,7 +605,7 @@ namespace OpenXmlPowerTools
         public static byte[] ConvertFromBase64(string fileName, string b64)
         {
             string b64b = b64.Replace("\r\n", "");
-            byte[] ba = System.Convert.FromBase64String(b64b);
+            byte[] ba = Convert.FromBase64String(b64b);
             return ba;
         }
     }
@@ -629,65 +627,63 @@ namespace OpenXmlPowerTools
 
     public static class WordprocessingMLUtil
     {
-        private static HashSet<string> UnknownFonts = new HashSet<string>();
-        private static HashSet<string> KnownFamilies = null;
+        private static readonly HashSet<string> _unknownFonts = new();
+        private static HashSet<string> _knownFamilies = null;
 
         public static int CalcWidthOfRunInTwips(XElement r)
         {
-            if (KnownFamilies == null)
+            if (_knownFamilies == null)
             {
-                KnownFamilies = new HashSet<string>();
-                var families = FontFamily.Families;
+                _knownFamilies = new HashSet<string>();
+                var families = SKFontManager.Default.FontFamilies;
                 foreach (var fam in families)
-                    KnownFamilies.Add(fam.Name);
+                    _knownFamilies.Add(fam);
             }
 
             var fontName = (string)r.Attribute(PtOpenXml.pt + "FontName");
-            if (fontName == null)
-                fontName = (string)r.Ancestors(W.p).First().Attribute(PtOpenXml.pt + "FontName");
+            fontName ??= (string)r.Ancestors(W.p).First().Attribute(PtOpenXml.pt + "FontName");
             if (fontName == null)
                 throw new OpenXmlPowerToolsException("Internal Error, should have FontName attribute");
-            if (UnknownFonts.Contains(fontName))
+            if (_unknownFonts.Contains(fontName))
                 return 0;
 
-            var rPr = r.Element(W.rPr);
-            if (rPr == null)
-                throw new OpenXmlPowerToolsException("Internal Error, should have run properties");
+            var rPr = r.Element(W.rPr)
+                ?? throw new OpenXmlPowerToolsException("Internal Error, should have run properties");
+
             var languageType = (string)r.Attribute(PtOpenXml.LanguageType);
-            decimal? szn = null;
+            float? szn = null;
             if (languageType == "bidi")
-                szn = (decimal?)rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault();
+                szn = (float?)rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault();
             else
-                szn = (decimal?)rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
-            if (szn == null)
-                szn = 22m;
+                szn = (float?)rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
+            szn ??= 22f;
 
             var sz = szn.GetValueOrDefault();
 
             // unknown font families will throw ArgumentException, in which case just return 0
-            if (!KnownFamilies.Contains(fontName))
+            if (!_knownFamilies.Contains(fontName))
                 return 0;
-            // in theory, all unknown fonts are found by the above test, but if not...
-            FontFamily ff;
-            try
-            {
-                ff = new FontFamily(fontName);
-            }
-            catch (ArgumentException)
-            {
-                UnknownFonts.Add(fontName);
 
-                return 0;
-            }
-            FontStyle fs = FontStyle.Regular;
+            var fs = SKFontStyle.Normal;
             var bold = GetBoolProp(rPr, W.b) || GetBoolProp(rPr, W.bCs);
             var italic = GetBoolProp(rPr, W.i) || GetBoolProp(rPr, W.iCs);
             if (bold && !italic)
-                fs = FontStyle.Bold;
+                fs = SKFontStyle.Bold;
             if (italic && !bold)
-                fs = FontStyle.Italic;
+                fs = SKFontStyle.Italic;
             if (bold && italic)
-                fs = FontStyle.Bold | FontStyle.Italic;
+                fs = SKFontStyle.BoldItalic;
+            // in theory, all unknown fonts are found by the above test, but if not...
+            SKTypeface ff;
+            try
+            {
+                ff = SKTypeface.FromFamilyName(fontName, fs);
+            }
+            catch (ArgumentException)
+            {
+                _unknownFonts.Add(fontName);
+                return 0;
+            }
 
             var runText = r.DescendantsTrimmed(W.txbxContent)
                 .Where(e => e.Name == W.t)
@@ -721,7 +717,7 @@ namespace OpenXmlPowerTools
                 runText = sb.ToString();
             }
 
-            var w = MetricsGetter.GetTextWidth(ff, fs, sz, runText);
+            var w = MetricsGetter.GetTextWidth(ff, sz, runText);
 
             return (int) (w / 96m * 1440m / multiplier + tabLength * 1440m);
         }
@@ -1945,71 +1941,6 @@ listSeparator
             return true;
         }
     }
-
-#if !NET35
-    public static class UriFixer
-    {
-        public static void FixInvalidUri(Stream fs, Func<string, Uri> invalidUriHandler)
-        {
-            XNamespace relNs = "http://schemas.openxmlformats.org/package/2006/relationships";
-            using (ZipArchive za = new ZipArchive(fs, ZipArchiveMode.Update))
-            {
-                foreach (var entry in za.Entries.ToList())
-                {
-                    if (!entry.Name.EndsWith(".rels"))
-                        continue;
-                    bool replaceEntry = false;
-                    XDocument entryXDoc = null;
-                    using (var entryStream = entry.Open())
-                    {
-                        try
-                        {
-                            entryXDoc = XDocument.Load(entryStream);
-                            if (entryXDoc.Root != null && entryXDoc.Root.Name.Namespace == relNs)
-                            {
-                                var urisToCheck = entryXDoc
-                                    .Descendants(relNs + "Relationship")
-                                    .Where(r => r.Attribute("TargetMode") != null && (string)r.Attribute("TargetMode") == "External");
-                                foreach (var rel in urisToCheck)
-                                {
-                                    var target = (string)rel.Attribute("Target");
-                                    if (target != null)
-                                    {
-                                        try
-                                        {
-                                            Uri uri = new Uri(target);
-                                        }
-                                        catch (UriFormatException)
-                                        {
-                                            Uri newUri = invalidUriHandler(target);
-                                            rel.Attribute("Target").Value = newUri.ToString();
-                                            replaceEntry = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        catch (XmlException)
-                        {
-                            continue;
-                        }
-                    }
-                    if (replaceEntry)
-                    {
-                        var fullName = entry.FullName;
-                        entry.Delete();
-                        var newEntry = za.CreateEntry(fullName);
-                        using (StreamWriter writer = new StreamWriter(newEntry.Open()))
-                        using (XmlWriter xmlWriter = XmlWriter.Create(writer))
-                        {
-                            entryXDoc.WriteTo(xmlWriter);
-                        }
-                    }
-                }
-            }
-        }
-    }
-#endif
 
     public static class ACTIVEX
     {

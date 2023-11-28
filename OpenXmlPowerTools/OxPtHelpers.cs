@@ -3,18 +3,16 @@
 
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Xml;
 using System.Xml.Linq;
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Wordprocessing;
-using DocumentFormat.OpenXml.Validation;
-using OpenXmlPowerTools;
-using System.Text;
 using DocumentFormat.OpenXml;
-using System.Drawing.Imaging;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Validation;
+using DocumentFormat.OpenXml.Wordprocessing;
+using SkiaSharp;
 
 namespace OpenXmlPowerTools
 {
@@ -53,12 +51,12 @@ namespace OpenXmlPowerTools
 
                     if (!string.IsNullOrEmpty(foreColor))
                     {
-                        int colorValue = ColorParser.FromName(foreColor).ToArgb();
+                        uint colorValue = (uint)ColorParser.FromName(foreColor);
                         if (colorValue == 0)
-                            throw new OpenXmlPowerToolsException(String.Format("Add-DocxText: The specified color {0} is unsupported, Please specify the valid color. Ex, Red, Green", foreColor));
+                            throw new OpenXmlPowerToolsException(string.Format("Add-DocxText: The specified color {0} is unsupported, Please specify the valid color. Ex, Red, Green", foreColor));
 
                         string ColorHex = string.Format("{0:x6}", colorValue);
-                        runProperties.AppendChild(new DocumentFormat.OpenXml.Wordprocessing.Color() { Val = ColorHex.Substring(2) });
+                        runProperties.AppendChild(new Color() { Val = ColorHex.Substring(2) });
                     }
 
                     if (isUnderline)
@@ -66,9 +64,9 @@ namespace OpenXmlPowerTools
 
                     if (!string.IsNullOrEmpty(backColor))
                     {
-                        int colorShade = ColorParser.FromName(backColor).ToArgb();
+                        uint colorShade = (uint)ColorParser.FromName(backColor);
                         if (colorShade == 0)
-                            throw new OpenXmlPowerToolsException(String.Format("Add-DocxText: The specified color {0} is unsupported, Please specify the valid color. Ex, Red, Green", foreColor));
+                            throw new OpenXmlPowerToolsException(string.Format("Add-DocxText: The specified color {0} is unsupported, Please specify the valid color. Ex, Red, Green", foreColor));
 
                         string ColorShadeHex = string.Format("{0:x6}", colorShade);
                         runProperties.AppendChild(new Shading() { Fill = ColorShadeHex.Substring(2), Val = ShadingPatternValues.Clear });
@@ -80,11 +78,10 @@ namespace OpenXmlPowerTools
                         //if the specified style is not present in word document add it
                         if (style == null)
                         {
-                            using (MemoryStream memoryStream = new MemoryStream())
-                            {
-                                #region Default.dotx Template has been used to get all the paragraph styles
-                                string base64 =
-        @"UEsDBBQABgAIAAAAIQDTMB8uXgEAACAFAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbLSUy27CMBBF
+                            using MemoryStream memoryStream = new MemoryStream();
+                            #region Default.dotx Template has been used to get all the paragraph styles
+                            string base64 =
+    @"UEsDBBQABgAIAAAAIQDTMB8uXgEAACAFAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbLSUy27CMBBF
 95X6D5G3VWLooqoqAos+li1S6QcYewJW/ZI9vP6+EwKoqiCRCmwiJTP33jNWxoPR2ppsCTFp70rW
 L3osAye90m5Wsq/JW/7IsoTCKWG8g5JtILHR8PZmMNkESBmpXSrZHDE8cZ7kHKxIhQ/gqFL5aAXS
 a5zxIOS3mAG/7/UeuPQOwWGOtQcbDl6gEguD2euaPjckEUxi2XPTWGeVTIRgtBRIdb506k9Kvkso
@@ -297,24 +294,21 @@ AAAAAAAAAAAAAAAAOhEAAHdvcmQvc3R5bGVzLnhtbFBLAQItABQABgAIANFqBkEJ28MF3QYAAFAb
 AAAVAAAAAAAAAAAAAAAAALojAAB3b3JkL3RoZW1lL3RoZW1lMS54bWxQSwECLQAUAAYACADRagZB
 joxzCXABAAD0AQAAFAAAAAAAAAAAAAAAAADKKgAAd29yZC93ZWJTZXR0aW5ncy54bWxQSwUGAAAA
 AAsACwDBAgAAbCwAAAAA";
-                                #endregion
+                            #endregion
 
-                                char[] base64CharArray = base64.Where(c => c != '\r' && c != '\n').ToArray();
-                                byte[] byteArray = System.Convert.FromBase64CharArray(base64CharArray, 0, base64CharArray.Length);
-                                memoryStream.Write(byteArray, 0, byteArray.Length);
+                            char[] base64CharArray = base64.Where(c => c != '\r' && c != '\n').ToArray();
+                            byte[] byteArray = Convert.FromBase64CharArray(base64CharArray, 0, base64CharArray.Length);
+                            memoryStream.Write(byteArray, 0, byteArray.Length);
 
-                                using (WordprocessingDocument defaultDotx = WordprocessingDocument.Open(memoryStream, true))
-                                {
-                                    //Get the specified style from Default.dotx template for paragraph
-                                    Style templateStyle = defaultDotx.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().Where(s => s.StyleId == styleName && s.Type == StyleValues.Paragraph).FirstOrDefault();
+                            using WordprocessingDocument defaultDotx = WordprocessingDocument.Open(memoryStream, true);
+                            //Get the specified style from Default.dotx template for paragraph
+                            Style templateStyle = defaultDotx.MainDocumentPart.StyleDefinitionsPart.Styles.Elements<Style>().Where(s => s.StyleId == styleName && s.Type == StyleValues.Paragraph).FirstOrDefault();
 
-                                    //Check if the style is proper style. Ex, Heading1, Heading2
-                                    if (templateStyle == null)
-                                        throw new OpenXmlPowerToolsException(String.Format("Add-DocxText: The specified style name {0} is unsupported, Please specify the valid style. Ex, Heading1, Heading2, Title", styleName));
-                                    else
-                                        part.Styles.Append((templateStyle.CloneNode(true)));
-                                }
-                            }
+                            //Check if the style is proper style. Ex, Heading1, Heading2
+                            if (templateStyle == null)
+                                throw new OpenXmlPowerToolsException(String.Format("Add-DocxText: The specified style name {0} is unsupported, Please specify the valid style. Ex, Heading1, Heading2, Title", styleName));
+                            else
+                                part.Styles.Append((templateStyle.CloneNode(true)));
                         }
 
                         paragraph.ParagraphProperties = new ParagraphProperties(new ParagraphStyleId() { Val = styleName });
@@ -339,103 +333,89 @@ AAsACwDBAgAAbCwAAAAA";
         {
             var fi = new FileInfo(file);
             byte[] byteArray = File.ReadAllBytes(fi.FullName);
-            using (MemoryStream memoryStream = new MemoryStream())
+            using MemoryStream memoryStream = new MemoryStream();
+            memoryStream.Write(byteArray, 0, byteArray.Length);
+            using WordprocessingDocument wDoc = WordprocessingDocument.Open(memoryStream, true);
+            var destFileName = new FileInfo(fi.Name.Replace(".docx", ".html"));
+            if (outputDirectory != null && outputDirectory != string.Empty)
             {
-                memoryStream.Write(byteArray, 0, byteArray.Length);
-                using (WordprocessingDocument wDoc = WordprocessingDocument.Open(memoryStream, true))
+                DirectoryInfo di = new DirectoryInfo(outputDirectory);
+                if (!di.Exists)
                 {
-                    var destFileName = new FileInfo(fi.Name.Replace(".docx", ".html"));
-                    if (outputDirectory != null && outputDirectory != string.Empty)
-                    {
-                        DirectoryInfo di = new DirectoryInfo(outputDirectory);
-                        if (!di.Exists)
-                        {
-                            throw new OpenXmlPowerToolsException("Output directory does not exist");
-                        }
-                        destFileName = new FileInfo(Path.Combine(di.FullName, destFileName.Name));
-                    }
-                    var imageDirectoryName = destFileName.FullName.Substring(0, destFileName.FullName.Length - 5) + "_files";
-                    int imageCounter = 0;
-                    var pageTitle = (string)wDoc.CoreFilePropertiesPart.GetXDocument().Descendants(DC.title).FirstOrDefault();
-                    if (pageTitle == null)
-                        pageTitle = fi.FullName;
-
-                    WmlToHtmlConverterSettings settings = new WmlToHtmlConverterSettings()
-                    {
-                        PageTitle = pageTitle,
-                        FabricateCssClasses = true,
-                        CssClassPrefix = "pt-",
-                        RestrictToSupportedLanguages = false,
-                        RestrictToSupportedNumberingFormats = false,
-                        ImageHandler = imageInfo =>
-                        {
-                            DirectoryInfo localDirInfo = new DirectoryInfo(imageDirectoryName);
-                            if (!localDirInfo.Exists)
-                                localDirInfo.Create();
-                            ++imageCounter;
-                            string extension = imageInfo.ContentType.Split('/')[1].ToLower();
-                            ImageFormat imageFormat = null;
-                            if (extension == "png")
-                            {
-                                // Convert png to jpeg.
-                                extension = "gif";
-                                imageFormat = ImageFormat.Gif;
-                            }
-                            else if (extension == "gif")
-                                imageFormat = ImageFormat.Gif;
-                            else if (extension == "bmp")
-                                imageFormat = ImageFormat.Bmp;
-                            else if (extension == "jpeg")
-                                imageFormat = ImageFormat.Jpeg;
-                            else if (extension == "tiff")
-                            {
-                                // Convert tiff to gif.
-                                extension = "gif";
-                                imageFormat = ImageFormat.Gif;
-                            }
-                            else if (extension == "x-wmf")
-                            {
-                                extension = "wmf";
-                                imageFormat = ImageFormat.Wmf;
-                            }
-
-                            // If the image format isn't one that we expect, ignore it,
-                            // and don't return markup for the link.
-                            if (imageFormat == null)
-                                return null;
-
-                            string imageFileName = imageDirectoryName + "/image" +
-                                imageCounter.ToString() + "." + extension;
-                            try
-                            {
-                                imageInfo.Bitmap.Save(imageFileName, imageFormat);
-                            }
-                            catch (System.Runtime.InteropServices.ExternalException)
-                            {
-                                return null;
-                            }
-                            XElement img = new XElement(Xhtml.img,
-                                new XAttribute(NoNamespace.src, imageFileName),
-                                imageInfo.ImgStyleAttribute,
-                                imageInfo.AltText != null ?
-                                    new XAttribute(NoNamespace.alt, imageInfo.AltText) : null);
-                            return img;
-                        }
-                    };
-                    XElement html = WmlToHtmlConverter.ConvertToHtml(wDoc, settings);
-
-                    // Note: the xhtml returned by ConvertToHtmlTransform contains objects of type
-                    // XEntity.  PtOpenXmlUtil.cs define the XEntity class.  See
-                    // http://blogs.msdn.com/ericwhite/archive/2010/01/21/writing-entity-references-using-linq-to-xml.aspx
-                    // for detailed explanation.
-                    //
-                    // If you further transform the XML tree returned by ConvertToHtmlTransform, you
-                    // must do it correctly, or entities will not be serialized properly.
-
-                    var htmlString = html.ToString(SaveOptions.DisableFormatting);
-                    File.WriteAllText(destFileName.FullName, htmlString, Encoding.UTF8);
+                    throw new OpenXmlPowerToolsException("Output directory does not exist");
                 }
+                destFileName = new FileInfo(Path.Combine(di.FullName, destFileName.Name));
             }
+            var imageDirectoryName = destFileName.FullName.Substring(0, destFileName.FullName.Length - 5) + "_files";
+            int imageCounter = 0;
+            var pageTitle = (string)wDoc.CoreFilePropertiesPart.GetXDocument().Descendants(DC.title).FirstOrDefault();
+            pageTitle ??= fi.FullName;
+
+            WmlToHtmlConverterSettings settings = new WmlToHtmlConverterSettings()
+            {
+                PageTitle = pageTitle,
+                FabricateCssClasses = true,
+                CssClassPrefix = "pt-",
+                RestrictToSupportedLanguages = false,
+                RestrictToSupportedNumberingFormats = false,
+                ImageHandler = imageInfo =>
+                {
+                    DirectoryInfo localDirInfo = new DirectoryInfo(imageDirectoryName);
+                    if (!localDirInfo.Exists)
+                        localDirInfo.Create();
+                    ++imageCounter;
+                    string extension = imageInfo.ContentType.Split('/')[1].ToLower();
+                    SKEncodedImageFormat imageFormat = (SKEncodedImageFormat)(-1);
+                    if (extension == "png")
+                        imageFormat = SKEncodedImageFormat.Png;
+                    else if (extension == "gif")
+                        imageFormat = SKEncodedImageFormat.Gif;
+                    else if (extension == "bmp")
+                        imageFormat = SKEncodedImageFormat.Bmp;
+                    else if (extension == "jpeg")
+                        imageFormat = SKEncodedImageFormat.Jpeg;
+                    else if (extension == "tiff")
+                    {
+                        // Convert tiff to gif.
+                        extension = "gif";
+                        imageFormat = SKEncodedImageFormat.Gif;
+                    }
+
+                    // If the image format isn't one that we expect, ignore it,
+                    // and don't return markup for the link.
+                    if (imageFormat < 0)
+                        return null;
+
+                    var imageFileName = imageDirectoryName + "/image" + imageCounter.ToString() + "." + extension;
+                    try
+                    {
+                        using var file = File.Create(imageFileName);
+                        imageInfo.Bitmap.Encode(file, imageFormat, 100);
+                    }
+                    catch (System.Runtime.InteropServices.ExternalException)
+                    {
+                        return null;
+                    }
+                    XElement img = new XElement(Xhtml.img,
+                        new XAttribute(NoNamespace.src, imageFileName),
+                        imageInfo.ImgStyleAttribute,
+                        imageInfo.AltText != null ?
+                            new XAttribute(NoNamespace.alt, imageInfo.AltText) : null);
+                    return img;
+                }
+            };
+            XElement html = WmlToHtmlConverter.ConvertToHtml(wDoc, settings);
+
+            // Note: the xhtml returned by ConvertToHtmlTransform contains objects of type
+            // XEntity.  PtOpenXmlUtil.cs define the XEntity class.  See
+            // http://blogs.msdn.com/ericwhite/archive/2010/01/21/writing-entity-references-using-linq-to-xml.aspx
+            // for detailed explanation.
+            //
+            // If you further transform the XML tree returned by ConvertToHtmlTransform, you
+            // must do it correctly, or entities will not be serialized properly.
+
+            var htmlString = html.ToString(SaveOptions.DisableFormatting);
+            File.WriteAllText(destFileName.FullName, htmlString, Encoding.UTF8);
         }
     }
 
@@ -558,39 +538,39 @@ AAsACwDBAgAAbCwAAAAA";
     {
         public string FileName;
 
-	    public int ActiveX;
-	    public int AltChunk;
-	    public int AsciiCharCount;
-	    public int AsciiRunCount;
-	    public int AverageParagraphLength;
-	    public int ComplexField;
-	    public int ContentControlCount;
-	    public XmlDocument ContentControls;
-	    public int CSCharCount;
-	    public int CSRunCount;
-	    public bool DocumentProtection;
-	    public int EastAsiaCharCount;
-	    public int EastAsiaRunCount;
-	    public int ElementCount;
-	    public bool EmbeddedXlsx;
-	    public int HAnsiCharCount;
-	    public int HAnsiRunCount;
-	    public int Hyperlink;
-	    public bool InvalidSaveThroughXslt;
-	    public string Languages;
-	    public int LegacyFrame;
-	    public int MultiFontRun;
-	    public string NumberingFormatList;
-	    public int ReferenceToNullImage;
-	    public bool RevisionTracking;
-	    public int RunCount;
-	    public int SimpleField;
-	    public XmlDocument StyleHierarchy;
-	    public int SubDocument;
-	    public int Table;
-	    public int TextBox;
-	    public bool TrackRevisionsEnabled;
-	    public bool Valid;
+        public int ActiveX;
+        public int AltChunk;
+        public int AsciiCharCount;
+        public int AsciiRunCount;
+        public int AverageParagraphLength;
+        public int ComplexField;
+        public int ContentControlCount;
+        public XmlDocument ContentControls;
+        public int CSCharCount;
+        public int CSRunCount;
+        public bool DocumentProtection;
+        public int EastAsiaCharCount;
+        public int EastAsiaRunCount;
+        public int ElementCount;
+        public bool EmbeddedXlsx;
+        public int HAnsiCharCount;
+        public int HAnsiRunCount;
+        public int Hyperlink;
+        public bool InvalidSaveThroughXslt;
+        public string Languages;
+        public int LegacyFrame;
+        public int MultiFontRun;
+        public string NumberingFormatList;
+        public int ReferenceToNullImage;
+        public bool RevisionTracking;
+        public int RunCount;
+        public int SimpleField;
+        public XmlDocument StyleHierarchy;
+        public int SubDocument;
+        public int Table;
+        public int TextBox;
+        public bool TrackRevisionsEnabled;
+        public bool Valid;
         public int ZeroLengthText;
     }
 

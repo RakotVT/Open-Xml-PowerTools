@@ -13,7 +13,6 @@ http://www.microsoft.com/resources/sharedsource/licensingbasics/publiclicense.ms
 ***************************************************************************/
 
 using System;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -21,7 +20,7 @@ using System.Text;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
 using OpenXmlPowerTools;
-using System.Collections.Generic;
+using SkiaSharp;
 
 class WmlToHtmlConverterHelper
 {
@@ -84,52 +83,43 @@ class WmlToHtmlConverterHelper
                     {
                         ++imageCounter;
                         string extension = imageInfo.ContentType.Split('/')[1].ToLower();
-                        ImageFormat imageFormat = null;
+                        SKEncodedImageFormat imageFormat = (SKEncodedImageFormat)(-1);
                         if (extension == "png")
-                            imageFormat = ImageFormat.Png;
+                            imageFormat = SKEncodedImageFormat.Png;
                         else if (extension == "gif")
-                            imageFormat = ImageFormat.Gif;
+                            imageFormat = SKEncodedImageFormat.Gif;
                         else if (extension == "bmp")
-                            imageFormat = ImageFormat.Bmp;
+                            imageFormat = SKEncodedImageFormat.Bmp;
                         else if (extension == "jpeg")
-                            imageFormat = ImageFormat.Jpeg;
+                            imageFormat = SKEncodedImageFormat.Jpeg;
                         else if (extension == "tiff")
                         {
                             // Convert tiff to gif.
                             extension = "gif";
-                            imageFormat = ImageFormat.Gif;
-                        }
-                        else if (extension == "x-wmf")
-                        {
-                            extension = "wmf";
-                            imageFormat = ImageFormat.Wmf;
+                            imageFormat = SKEncodedImageFormat.Gif;
                         }
 
                         // If the image format isn't one that we expect, ignore it,
                         // and don't return markup for the link.
-                        if (imageFormat == null)
+                        if (imageFormat < 0)
                             return null;
 
                         string base64 = null;
                         try
                         {
-                            using (MemoryStream ms = new MemoryStream())
+                            using (var ms = new MemoryStream())
                             {
-                                imageInfo.Bitmap.Save(ms, imageFormat);
+                                imageInfo.Bitmap.Encode(ms, imageFormat, 100);
                                 var ba = ms.ToArray();
-                                base64 = System.Convert.ToBase64String(ba);
+                                base64 = Convert.ToBase64String(ba);
                             }
                         }
-                        catch (System.Runtime.InteropServices.ExternalException)
+                        catch (ExternalException)
                         {
                             return null;
                         }
 
-                        ImageFormat format = imageInfo.Bitmap.RawFormat;
-                        ImageCodecInfo codec = ImageCodecInfo.GetImageDecoders().First(c => c.FormatID == format.Guid);
-                        string mimeType = codec.MimeType;
-
-                        string imageSource = string.Format("data:{0};base64,{1}", mimeType, base64);
+                        string imageSource = string.Format("data:{0};base64,{1}", imageInfo.ContentType, base64);
 
                         XElement img = new XElement(Xhtml.img,
                             new XAttribute(NoNamespace.src, imageSource),

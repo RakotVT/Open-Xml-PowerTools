@@ -17,97 +17,68 @@ Resource Center and Documentation: http://openxmldeveloper.org/wiki/w/wiki/power
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using SkiaSharp;
 
 namespace OpenXmlPowerTools.HtmlToWml.CSS
 {
     public class CssAttribute
     {
-        private string m_operand;
-        private CssAttributeOperator? m_op = null;
-        private string m_val;
-
-        public string Operand
-        {
-            get {
-                return m_operand;
-            }
-            set {
-                m_operand = value;
-            }
-        }
-
-        public CssAttributeOperator? Operator
-        {
-            get {
-                return m_op;
-            }
-            set {
-                m_op = value;
-            }
-        }
+        public string Operand { get; set; }
+        public CssAttributeOperator? Operator { get; set; } = null;
+        public string Value { get; set; }
 
         public string CssOperatorString
         {
-            get {
-                if (this.m_op.HasValue)
-                {
-                    return this.m_op.Value.ToString();
-                }
-                else
-                {
-                    return null;
-                }
+            get
+            {
+                return Operator.HasValue ? Operator.Value.ToString() : null;
             }
-            set {
-                this.m_op = (CssAttributeOperator)Enum.Parse(typeof(CssAttributeOperator), value);
+            set
+            {
+                Operator = (CssAttributeOperator)Enum.Parse(typeof(CssAttributeOperator), value);
             }
         }
 
-        public string Value
-        {
-            get {
-                return m_val;
-            }
-            set {
-                m_val = value;
-            }
-        }
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendFormat("[{0}", m_operand);
-            if (m_op.HasValue)
+            sb.AppendFormat("[{0}", Operand);
+            if (Operator.HasValue)
             {
-                switch (m_op.Value)
+                switch (Operator.Value)
                 {
                     case CssAttributeOperator.Equals:
-                        sb.Append("=");
+                        sb.Append('=');
                         break;
+
                     case CssAttributeOperator.InList:
                         sb.Append("~=");
                         break;
+
                     case CssAttributeOperator.Hyphenated:
                         sb.Append("|=");
                         break;
+
                     case CssAttributeOperator.BeginsWith:
                         sb.Append("$=");
                         break;
+
                     case CssAttributeOperator.EndsWith:
                         sb.Append("^=");
                         break;
+
                     case CssAttributeOperator.Contains:
                         sb.Append("*=");
                         break;
                 }
-                sb.Append(m_val);
+                sb.Append(Value);
             }
-            sb.Append("]");
+            sb.Append(']');
             return sb.ToString();
         }
     }
@@ -129,35 +100,39 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         PrecededBy,
     }
 
-    public class CssDocument : ItfRuleSetContainer
+    public class CssDocument : ITfRuleSetContainer
     {
-        private List<CssDirective> m_dirs = new List<CssDirective>();
-        private List<CssRuleSet> m_rulesets = new List<CssRuleSet>();
+        private List<CssDirective> _dirs = new();
+        private List<CssRuleSet> _rulesets = new();
 
         public List<CssDirective> Directives
         {
-            get {
-                return m_dirs;
+            get
+            {
+                return _dirs;
             }
-            set {
-                m_dirs = value;
+            set
+            {
+                _dirs = value;
             }
         }
 
         public List<CssRuleSet> RuleSets
         {
-            get {
-                return m_rulesets;
+            get
+            {
+                return _rulesets;
             }
-            set {
-                m_rulesets = value;
+            set
+            {
+                _rulesets = value;
             }
         }
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
-            foreach (CssDirective cssDir in m_dirs)
+            foreach (CssDirective cssDir in _dirs)
             {
                 sb.AppendFormat("{0}" + Environment.NewLine, cssDir.ToString());
             }
@@ -165,7 +140,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             {
                 sb.Append(Environment.NewLine);
             }
-            foreach (CssRuleSet rules in m_rulesets)
+            foreach (CssRuleSet rules in _rulesets)
             {
                 sb.AppendFormat("{0}" + Environment.NewLine,
                     rules.ToString());
@@ -176,130 +151,38 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssDeclaration
     {
-        private string m_name;
-        private CssExpression m_expression;
-        private bool m_important;
+        public string Name { get; set; }
 
-        public string Name
-        {
-            get {
-                return m_name;
-            }
-            set {
-                m_name = value;
-            }
-        }
+        public bool Important { get; set; }
 
-        public bool Important
-        {
-            get {
-                return m_important;
-            }
-            set {
-                m_important = value;
-            }
-        }
-
-        public CssExpression Expression
-        {
-            get {
-                return m_expression;
-            }
-            set {
-                m_expression = value;
-            }
-        }
+        public CssExpression Expression { get; set; }
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendFormat("{0}: {1}{2}",
-                m_name,
-                m_expression.ToString(),
-                m_important ? " !important" : "");
+                Name,
+                Expression.ToString(),
+                Important ? " !important" : "");
             return sb.ToString();
         }
     }
 
-    public class CssDirective : ItfDeclarationContainer, ItfRuleSetContainer
+    public class CssDirective : ITfDeclarationContainer, ITfRuleSetContainer
     {
-        private CssDirectiveType m_type;
-        private string m_name;
-        private CssExpression m_expression;
-        private List<CssMedium> m_mediums = new List<CssMedium>();
-        private List<CssDirective> m_directives = new List<CssDirective>();
-        private List<CssRuleSet> m_rulesets = new List<CssRuleSet>();
-        private List<CssDeclaration> m_declarations = new List<CssDeclaration>();
+        public CssDirectiveType Type { get; set; }
 
-        public CssDirectiveType Type
-        {
-            get {
-                return this.m_type;
-            }
-            set {
-                this.m_type = value;
-            }
-        }
+        public string Name { get; set; }
 
-        public string Name
-        {
-            get {
-                return this.m_name;
-            }
-            set {
-                this.m_name = value;
-            }
-        }
+        public CssExpression Expression { get; set; }
 
-        public CssExpression Expression
-        {
-            get {
-                return this.m_expression;
-            }
-            set {
-                this.m_expression = value;
-            }
-        }
+        public List<CssMedium> Mediums { get; set; } = new List<CssMedium>();
 
-        public List<CssMedium> Mediums
-        {
-            get {
-                return this.m_mediums;
-            }
-            set {
-                this.m_mediums = value;
-            }
-        }
+        public List<CssDirective> Directives { get; set; } = new List<CssDirective>();
 
-        public List<CssDirective> Directives
-        {
-            get {
-                return this.m_directives;
-            }
-            set {
-                this.m_directives = value;
-            }
-        }
+        public List<CssRuleSet> RuleSets { get; set; } = new List<CssRuleSet>();
 
-        public List<CssRuleSet> RuleSets
-        {
-            get {
-                return this.m_rulesets;
-            }
-            set {
-                this.m_rulesets = value;
-            }
-        }
-
-        public List<CssDeclaration> Declarations
-        {
-            get {
-                return this.m_declarations;
-            }
-            set {
-                this.m_declarations = value;
-            }
-        }
+        public List<CssDeclaration> Declarations { get; set; } = new List<CssDeclaration>();
 
         public override string ToString()
         {
@@ -310,36 +193,40 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         {
             string start = "".PadRight(indentLevel, '\t');
 
-            switch (m_type)
+            switch (Type)
             {
                 case CssDirectiveType.Charset:
                     return ToCharSetString(start);
+
                 case CssDirectiveType.Page:
                     return ToPageString(start);
+
                 case CssDirectiveType.Media:
                     return ToMediaString(indentLevel);
+
                 case CssDirectiveType.Import:
                     return ToImportString();
+
                 case CssDirectiveType.FontFace:
                     return ToFontFaceString(start);
             }
 
             StringBuilder sb = new StringBuilder();
 
-            sb.AppendFormat("{0} ", m_name);
+            sb.AppendFormat("{0} ", Name);
 
-            if (m_expression != null)
+            if (Expression != null)
             {
-                sb.AppendFormat("{0} ", m_expression);
+                sb.AppendFormat("{0} ", Expression);
             }
 
             bool first = true;
-            foreach (CssMedium med in m_mediums)
+            foreach (CssMedium med in Mediums)
             {
                 if (first)
                 {
                     first = false;
-                    sb.Append(" ");
+                    sb.Append(' ');
                 }
                 else
                 {
@@ -348,28 +235,28 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 sb.Append(med.ToString());
             }
 
-            bool HasBlock = (this.m_declarations.Count > 0 || this.m_directives.Count > 0 || this.m_rulesets.Count > 0);
+            bool HasBlock = (Declarations.Count > 0 || Directives.Count > 0 || RuleSets.Count > 0);
 
             if (!HasBlock)
             {
-                sb.Append(";");
+                sb.Append(';');
                 return sb.ToString();
             }
 
             sb.Append(" {" + Environment.NewLine + start);
 
-            foreach (CssDirective dir in m_directives)
+            foreach (CssDirective dir in Directives)
             {
                 sb.AppendFormat("{0}" + Environment.NewLine, dir.ToCharSetString(start + "\t"));
             }
 
-            foreach (CssRuleSet rules in m_rulesets)
+            foreach (CssRuleSet rules in RuleSets)
             {
                 sb.AppendFormat("{0}" + Environment.NewLine, rules.ToString(indentLevel + 1));
             }
 
             first = true;
-            foreach (CssDeclaration decl in m_declarations)
+            foreach (CssDeclaration decl in Declarations)
             {
                 if (first)
                 {
@@ -377,7 +264,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 else
                 {
-                    sb.Append(";");
+                    sb.Append(';');
                 }
                 sb.Append(Environment.NewLine + "\t" + start);
                 sb.Append(decl.ToString());
@@ -393,7 +280,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             sb.Append("@font-face {");
 
             bool first = true;
-            foreach (CssDeclaration decl in m_declarations)
+            foreach (CssDeclaration decl in Declarations)
             {
                 if (first)
                 {
@@ -401,7 +288,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 else
                 {
-                    sb.Append(";");
+                    sb.Append(';');
                 }
                 sb.Append(Environment.NewLine + "\t" + start);
                 sb.Append(decl.ToString());
@@ -415,17 +302,17 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         {
             StringBuilder sb = new StringBuilder();
             sb.Append("@import ");
-            if (m_expression != null)
+            if (Expression != null)
             {
-                sb.AppendFormat("{0} ", m_expression);
+                sb.AppendFormat("{0} ", Expression);
             }
             bool first = true;
-            foreach (CssMedium med in m_mediums)
+            foreach (CssMedium med in Mediums)
             {
                 if (first)
                 {
                     first = false;
-                    sb.Append(" ");
+                    sb.Append(' ');
                 }
                 else
                 {
@@ -433,7 +320,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 sb.Append(med.ToString());
             }
-            sb.Append(";");
+            sb.Append(';');
             return sb.ToString();
         }
 
@@ -443,12 +330,12 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             sb.Append("@media");
 
             bool first = true;
-            foreach (CssMedium medium in m_mediums)
+            foreach (CssMedium medium in Mediums)
             {
                 if (first)
                 {
                     first = false;
-                    sb.Append(" ");
+                    sb.Append(' ');
                 }
                 else
                 {
@@ -458,12 +345,12 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
             sb.Append(" {" + Environment.NewLine);
 
-            foreach (CssRuleSet ruleset in m_rulesets)
+            foreach (CssRuleSet ruleset in RuleSets)
             {
                 sb.AppendFormat("{0}" + Environment.NewLine, ruleset.ToString(indentLevel + 1));
             }
 
-            sb.Append("}");
+            sb.Append('}');
             return sb.ToString();
         }
 
@@ -471,14 +358,14 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         {
             StringBuilder sb = new StringBuilder();
             sb.Append("@page ");
-            if (m_expression != null)
+            if (Expression != null)
             {
-                sb.AppendFormat("{0} ", m_expression);
+                sb.AppendFormat("{0} ", Expression);
             }
             sb.Append("{" + Environment.NewLine);
 
             bool first = true;
-            foreach (CssDeclaration decl in m_declarations)
+            foreach (CssDeclaration decl in Declarations)
             {
                 if (first)
                 {
@@ -486,21 +373,21 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 else
                 {
-                    sb.Append(";");
+                    sb.Append(';');
                 }
                 sb.Append(Environment.NewLine + "\t" + start);
                 sb.Append(decl.ToString());
             }
 
-            sb.Append("}");
+            sb.Append('}');
             return sb.ToString();
         }
 
         private string ToCharSetString(string start)
         {
-            return string.Format("{2}{0} {1}", 
-                m_name, 
-                m_expression.ToString(), 
+            return string.Format("{2}{0} {1}",
+                Name,
+                Expression.ToString(),
                 start);
         }
     }
@@ -518,55 +405,21 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssExpression
     {
-        private List<CssTerm> m_terms = new List<CssTerm>();
+        public List<CssTerm> Terms { get; set; } = new List<CssTerm>();
 
-        public List<CssTerm> Terms
-        {
-            get {
-                return m_terms;
-            }
-            set {
-                m_terms = value;
-            }
-        }
+        public bool IsNotAuto => this != null && ToString() != "auto";
 
-        public bool IsNotAuto
-        {
-            get
-            {
-                return (this != null && this.ToString() != "auto");
-            }
-        }
+        public bool IsAuto => this != null && ToString() == "auto";
 
-        public bool IsAuto
-        {
-            get
-            {
-                return (this != null && this.ToString() == "auto");
-            }
-        }
+        public bool IsNotNormal => this != null && ToString() != "normal";
 
-        public bool IsNotNormal
-        {
-            get
-            {
-                return (this != null && this.ToString() != "normal");
-            }
-        }
-
-        public bool IsNormal
-        {
-            get
-            {
-                return (this != null && this.ToString() == "normal");
-            }
-        }
+        public bool IsNormal => this != null && ToString() == "normal";
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
             bool first = true;
-            foreach (CssTerm term in m_terms)
+            foreach (CssTerm term in Terms)
             {
                 if (first)
                 {
@@ -574,7 +427,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 else
                 {
-                    sb.AppendFormat("{0} ", 
+                    sb.AppendFormat("{0} ",
                         term.Separator.HasValue ? term.Separator.Value.ToString() : "");
                 }
                 sb.Append(term.ToString());
@@ -606,13 +459,12 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         // will only be called on expression that is in terms of points
         public static explicit operator Twip(CssExpression length)
         {
-            if (length.Terms.Count() == 1)
+            if (length.Terms.Count == 1)
             {
                 CssTerm term = length.Terms.First();
                 if (term.Unit == CssUnit.PT)
                 {
-                    double ptValue;
-                    if (double.TryParse(term.Value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out ptValue))
+                    if (double.TryParse(term.Value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var ptValue))
                     {
                         if (term.Sign == '-')
                             ptValue = -ptValue;
@@ -626,37 +478,18 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssFunction
     {
-        private string m_name;
-        private CssExpression m_expression;
+        public string Name { get; set; }
 
-        public string Name
-        {
-            get {
-                return m_name;
-            }
-            set {
-                m_name = value;
-            }
-        }
-
-        public CssExpression Expression
-        {
-            get {
-                return m_expression;
-            }
-            set {
-                m_expression = value;
-            }
-        }
+        public CssExpression Expression { get; set; }
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendFormat("{0}(", m_name);
-            if (m_expression != null)
+            sb.AppendFormat("{0}(", Name);
+            if (Expression != null)
             {
                 bool first = true;
-                foreach (CssTerm t in m_expression.Terms)
+                foreach (CssTerm t in Expression.Terms)
                 {
                     if (first)
                     {
@@ -674,31 +507,31 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     }
                     if (quote)
                     {
-                        sb.Append("'");
+                        sb.Append('\'');
                     }
                     sb.Append(t.ToString());
                     if (quote)
                     {
-                        sb.Append("'");
+                        sb.Append('\'');
                     }
                 }
             }
-            sb.Append(")");
+            sb.Append(')');
             return sb.ToString();
         }
     }
 
-    public interface ItfDeclarationContainer
+    public interface ITfDeclarationContainer
     {
         List<CssDeclaration> Declarations { get; set; }
     }
 
-    public interface ItfRuleSetContainer
+    public interface ITfRuleSetContainer
     {
         List<CssRuleSet> RuleSets { get; set; }
     }
 
-    public interface ItfSelectorContainer
+    public interface ITfSelectorContainer
     {
         List<CssSelector> Selectors { get; set; }
     }
@@ -719,50 +552,22 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssPropertyValue
     {
-        private CssValueType m_type;
-        private CssUnit m_unit;
-        private string m_value;
+        public CssValueType Type { get; set; }
 
-        public CssValueType Type
-        {
-            get {
-                return this.m_type;
-            }
-            set {
-                this.m_type = value;
-            }
-        }
+        public CssUnit Unit { get; set; }
 
-        public CssUnit Unit
-        {
-            get {
-                return this.m_unit;
-            }
-            set {
-                this.m_unit = value;
-            }
-        }
-
-        public string Value
-        {
-            get {
-                return this.m_value;
-            }
-            set {
-                this.m_value = value;
-            }
-        }
+        public string Value { get; set; }
 
         public override string ToString()
         {
-            StringBuilder sb = new StringBuilder(m_value);
-            if (m_type == CssValueType.Unit)
+            StringBuilder sb = new StringBuilder(Value);
+            if (Type == CssValueType.Unit)
             {
-                sb.Append(m_unit.ToString().ToLower());
+                sb.Append(Unit.ToString().ToLower());
             }
             sb.Append(" [");
-            sb.Append(m_type.ToString());
-            sb.Append("]");
+            sb.Append(Type.ToString());
+            sb.Append(']');
             return sb.ToString();
         }
 
@@ -770,12 +575,12 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         {
             get
             {
-                if (((m_type == CssValueType.Hex) 
-                    || (m_type == CssValueType.String && m_value.StartsWith("#"))) 
-                    && (m_value.Length == 6 || (m_value.Length == 7 && m_value.StartsWith("#"))))
+                if (((Type == CssValueType.Hex)
+                    || (Type == CssValueType.String && Value.StartsWith("#")))
+                    && (Value.Length == 6 || (Value.Length == 7 && Value.StartsWith("#"))))
                 {
                     bool hex = true;
-                    foreach (char c in m_value)
+                    foreach (char c in Value)
                     {
                         if (!char.IsDigit(c)
                             && c != '#'
@@ -798,10 +603,10 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     }
                     return hex;
                 }
-                else if (m_type == CssValueType.String)
+                else if (Type == CssValueType.String)
                 {
                     bool number = true;
-                    foreach (char c in m_value)
+                    foreach (char c in Value)
                     {
                         if (!char.IsDigit(c))
                         {
@@ -811,7 +616,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     }
                     if (number) { return false; }
 
-                    if (ColorParser.IsValidName(m_value))
+                    if (ColorParser.IsValidName(Value))
                     {
                         return true;
                     }
@@ -820,64 +625,48 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        public Color ToColor()
+        public SKColor ToColor()
         {
             string hex = "000000";
-            if (m_type == CssValueType.Hex)
+            if (Type == CssValueType.Hex)
             {
-                if (m_value.Length == 7 && m_value.StartsWith("#"))
+                if (Value.Length == 7 && Value.StartsWith("#"))
                 {
-                    hex = m_value.Substring(1);
+                    hex = Value.Substring(1);
                 }
-                else if (m_value.Length == 6)
+                else if (Value.Length == 6)
                 {
-                    hex = m_value;
+                    hex = Value;
                 }
             }
             else
             {
-                if (ColorParser.TryFromName(m_value, out var c))
-                {
+                if (ColorParser.TryFromName(Value, out var c))
                     return c;
-                }
             }
-            int r = ConvertFromHex(hex.Substring(0, 2));
-            int g = ConvertFromHex(hex.Substring(2, 2));
-            int b = ConvertFromHex(hex.Substring(4));
-            return Color.FromArgb(r, g, b);
+            var r = ConvertFromHex(hex.Substring(0, 2));
+            var g = ConvertFromHex(hex.Substring(2, 2));
+            var b = ConvertFromHex(hex.Substring(4));
+            return new SKColor(r, g, b);
         }
 
-        private int ConvertFromHex(string input)
+        private static byte ConvertFromHex(string input)
         {
-            int val;
+            byte val;
             int result = 0;
             for (int i = 0; i < input.Length; i++)
             {
                 string chunk = input.Substring(i, 1).ToUpper();
-                switch (chunk)
+                val = chunk switch
                 {
-                    case "A":
-                        val = 10; 
-                        break;
-                    case "B":
-                        val = 11; 
-                        break;
-                    case "C":
-                        val = 12; 
-                        break;
-                    case "D":
-                        val = 13; 
-                        break;
-                    case "E":
-                        val = 14; 
-                        break;
-                    case "F":
-                        val = 15; 
-                        break;
-                    default:
-                        val = int.Parse(chunk); 
-                        break;
-                }
+                    "A" => 10,
+                    "B" => 11,
+                    "C" => 12,
+                    "D" => 13,
+                    "E" => 14,
+                    "F" => 15,
+                    _ => byte.Parse(chunk),
+                };
                 if (i == 0)
                 {
                     result += val * 16;
@@ -887,34 +676,15 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     result += val;
                 }
             }
-            return result;
+            return (byte)result;
         }
     }
 
-    public class CssRuleSet : ItfDeclarationContainer
+    public class CssRuleSet : ITfDeclarationContainer
     {
-        private List<CssSelector> m_selectors = new List<CssSelector>();
-        private List<CssDeclaration> m_declarations = new List<CssDeclaration>();
+        public List<CssSelector> Selectors { get; set; } = new List<CssSelector>();
 
-        public List<CssSelector> Selectors
-        {
-            get {
-                return m_selectors;
-            }
-            set {
-                m_selectors = value;
-            }
-        }
-
-        public List<CssDeclaration> Declarations
-        {
-            get {
-                return m_declarations;
-            }
-            set {
-                m_declarations = value;
-            }
-        }
+        public List<CssDeclaration> Declarations { get; set; } = new List<CssDeclaration>();
 
         public override string ToString()
         {
@@ -931,51 +701,41 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
             StringBuilder sb = new StringBuilder();
             bool first = true;
-            foreach (CssSelector sel in m_selectors)
+            foreach (CssSelector sel in Selectors)
             {
-                if (first) 
-                { 
-                    first = false; 
-                    sb.Append(start); 
-                } 
-                else 
-                { 
-                    sb.Append(", "); 
+                if (first)
+                {
+                    first = false;
+                    sb.Append(start);
+                }
+                else
+                {
+                    sb.Append(", ");
                 }
                 sb.Append(sel.ToString());
             }
             sb.Append(" {" + Environment.NewLine);
             sb.Append(start);
 
-            foreach (CssDeclaration dec in m_declarations)
+            foreach (CssDeclaration dec in Declarations)
             {
                 sb.AppendFormat("\t{0};" + Environment.NewLine + "{1}", dec.ToString(), start);
             }
 
-            sb.Append("}");
+            sb.Append('}');
             return sb.ToString();
         }
     }
 
     public class CssSelector
     {
-        private List<CssSimpleSelector> m_simpleSelectors = new List<CssSimpleSelector>();
-
-        public List<CssSimpleSelector> SimpleSelectors
-        {
-            get {
-                return m_simpleSelectors;
-            }
-            set {
-                m_simpleSelectors = value;
-            }
-        }
+        public List<CssSimpleSelector> SimpleSelectors { get; set; } = new List<CssSimpleSelector>();
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
             bool first = true;
-            foreach (CssSimpleSelector ss in m_simpleSelectors)
+            foreach (CssSimpleSelector ss in SimpleSelectors)
             {
                 if (first)
                 {
@@ -983,7 +743,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 else
                 {
-                    sb.Append(" ");
+                    sb.Append(' ');
                 }
                 sb.Append(ss.ToString());
             }
@@ -993,160 +753,85 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssSimpleSelector
     {
-        private CssCombinator? m_combinator = null;
-        private string m_elementname;
-        private string m_id;
-        private string m_cls;
-        private CssAttribute m_attribute;
-        private string m_pseudo;
-        private CssFunction m_function;
-        private CssSimpleSelector m_child;
+        public CssCombinator? Combinator { get; set; } = null;
 
-        public CssCombinator? Combinator
-        {
-            get {
-                return m_combinator;
-            }
-            set {
-                m_combinator = value;
-            }
-        }
         public string CombinatorString
         {
-            get {
-                if (this.m_combinator.HasValue)
-                {
-                    return m_combinator.ToString();
-                }
-                else
-                {
-                    return null;
-                }
+            get
+            {
+                return Combinator.HasValue ? Combinator.ToString() : null;
             }
-            set {
-                this.m_combinator = (CssCombinator)Enum.Parse(typeof(CssCombinator), value);
+            set
+            {
+                Combinator = (CssCombinator)Enum.Parse(typeof(CssCombinator), value);
             }
         }
 
-        public string ElementName
-        {
-            get {
-                return m_elementname;
-            }
-            set {
-                m_elementname = value;
-            }
-        }
+        public string ElementName { get; set; }
 
-        public string ID
-        {
-            get {
-                return m_id;
-            }
-            set {
-                m_id = value;
-            }
-        }
+        public string ID { get; set; }
 
-        public string Class
-        {
-            get {
-                return m_cls;
-            }
-            set {
-                m_cls = value;
-            }
-        }
+        public string Class { get; set; }
 
-        public string Pseudo
-        {
-            get {
-                return m_pseudo;
-            }
-            set {
-                m_pseudo = value;
-            }
-        }
+        public string Pseudo { get; set; }
 
-        public CssAttribute Attribute
-        {
-            get {
-                return m_attribute;
-            }
-            set {
-                m_attribute = value;
-            }
-        }
+        public CssAttribute Attribute { get; set; }
 
-        public CssFunction Function
-        {
-            get {
-                return m_function;
-            }
-            set {
-                m_function = value;
-            }
-        }
+        public CssFunction Function { get; set; }
 
-        public CssSimpleSelector Child
-        {
-            get {
-                return m_child;
-            }
-            set {
-                m_child = value;
-            }
-        }
+        public CssSimpleSelector Child { get; set; }
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
-            if (m_combinator.HasValue)
+            if (Combinator.HasValue)
             {
-                switch (m_combinator.Value)
+                switch (Combinator.Value)
                 {
-                    case OpenXmlPowerTools.HtmlToWml.CSS.CssCombinator.PrecededImmediatelyBy: 
-                        sb.Append(" + "); 
+                    case CssCombinator.PrecededImmediatelyBy:
+                        sb.Append(" + ");
                         break;
-                    case OpenXmlPowerTools.HtmlToWml.CSS.CssCombinator.ChildOf: 
-                        sb.Append(" > "); 
+
+                    case CssCombinator.ChildOf:
+                        sb.Append(" > ");
                         break;
-                    case OpenXmlPowerTools.HtmlToWml.CSS.CssCombinator.PrecededBy: 
-                        sb.Append(" ~ "); 
+
+                    case CssCombinator.PrecededBy:
+                        sb.Append(" ~ ");
                         break;
                 }
             }
-            if (m_elementname != null)
+            if (ElementName != null)
             {
-                sb.Append(m_elementname);
+                sb.Append(ElementName);
             }
-            if (m_id != null)
+            if (ID != null)
             {
-                sb.AppendFormat("#{0}", m_id);
+                sb.AppendFormat("#{0}", ID);
             }
-            if (m_cls != null)
+            if (Class != null)
             {
-                sb.AppendFormat(".{0}", m_cls);
+                sb.AppendFormat(".{0}", Class);
             }
-            if (m_pseudo != null)
+            if (Pseudo != null)
             {
-                sb.AppendFormat(":{0}", m_pseudo);
+                sb.AppendFormat(":{0}", Pseudo);
             }
-            if (m_attribute != null)
+            if (Attribute != null)
             {
-                sb.Append(m_attribute.ToString());
+                sb.Append(Attribute.ToString());
             }
-            if (m_function != null)
+            if (Function != null)
             {
-                sb.Append(m_function.ToString());
+                sb.Append(Function.ToString());
             }
-            if (m_child != null)
+            if (Child != null)
             {
-                if (m_child.ElementName != null)
+                if (Child.ElementName != null)
                 {
-                    sb.Append(" ");
+                    sb.Append(' ');
                 }
-                sb.Append(m_child.ToString());
+                sb.Append(Child.ToString());
             }
             return sb.ToString();
         }
@@ -1154,131 +839,44 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssTag
     {
-        private CssTagType m_tagtype;
-        private string m_name;
-        private string m_cls;
-        private string m_pseudo;
-        private string m_id;
-        private char m_parentrel = '\0';
-        private CssTag m_subtag;
-        private List<string> m_attribs = new List<string>();
+        public CssTagType TagType { get; set; }
 
-        public CssTagType TagType
+        public bool IsIDSelector => Id != null;
+
+        public bool HasName => Name != null;
+
+        public bool GetHasClass()
         {
-            get {
-                return m_tagtype;
-            }
-            set {
-                m_tagtype = value;
-            }
+            return Class != null;
         }
 
-        public bool IsIDSelector
+        public bool GetHasPseudoClass()
         {
-            get {
-                return m_id != null;
-            }
+            return Pseudo != null;
         }
 
-        public bool HasName
-        {
-            get {
-                return m_name != null;
-            }
-        }
+        public string Name { get; set; }
 
-        public bool HasClass
-        {
-            get {
-                return m_cls != null;
-            }
-        }
+        public string Class { get; set; }
 
-        public bool HasPseudoClass
-        {
-            get {
-                return m_pseudo != null;
-            }
-        }
+        public string Pseudo { get; set; }
 
-        public string Name
-        {
-            get {
-                return m_name;
-            }
-            set {
-                m_name = value;
-            }
-        }
+        public string Id { get; set; }
 
-        public string Class
-        {
-            get {
-                return m_cls;
-            }
-            set {
-                m_cls = value;
-            }
-        }
+        public char ParentRelationship { get; set; } = '\0';
 
-        public string Pseudo
-        {
-            get {
-                return m_pseudo;
-            }
-            set {
-                m_pseudo = value;
-            }
-        }
+        public CssTag SubTag { get; set; }
 
-        public string Id
-        {
-            get {
-                return m_id;
-            }
-            set {
-                m_id = value;
-            }
-        }
-
-        public char ParentRelationship
-        {
-            get {
-                return m_parentrel;
-            }
-            set {
-                m_parentrel = value;
-            }
-        }
-
-        public CssTag SubTag
-        {
-            get {
-                return m_subtag;
-            }
-            set {
-                m_subtag = value;
-            }
-        }
-
-        public List<string> Attributes
-        {
-            get {
-                return m_attribs;
-            }
-            set {
-                m_attribs = value;
-            }
-        }
+        public List<string> Attributes { get; set; } = new List<string>();
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder(ToShortString());
 
-            if (m_subtag != null)
+            if (SubTag != null)
             {
-                sb.Append(" ");
-                sb.Append(m_subtag.ToString());
+                sb.Append(' ');
+                sb.Append(SubTag.ToString());
             }
             return sb.ToString();
         }
@@ -1286,32 +884,32 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         public string ToShortString()
         {
             StringBuilder sb = new StringBuilder();
-            if (m_parentrel != '\0')
+            if (ParentRelationship != '\0')
             {
-                sb.AppendFormat("{0} ", m_parentrel.ToString());
+                sb.AppendFormat("{0} ", ParentRelationship.ToString());
             }
             if (HasName)
             {
-                sb.Append(m_name);
+                sb.Append(Name);
             }
-            foreach (string atr in m_attribs)
+            foreach (string atr in Attributes)
             {
                 sb.AppendFormat("[{0}]", atr);
             }
-            if (HasClass)
+            if (GetHasClass())
             {
-                sb.Append(".");
-                sb.Append(m_cls);
+                sb.Append('.');
+                sb.Append(Class);
             }
             if (IsIDSelector)
             {
-                sb.Append("#");
-                sb.Append(m_id);
+                sb.Append('#');
+                sb.Append(Id);
             }
-            if (HasPseudoClass)
+            if (GetHasPseudoClass())
             {
-                sb.Append(":");
-                sb.Append(m_pseudo);
+                sb.Append(':');
+                sb.Append(Pseudo);
             }
             return sb.ToString();
         }
@@ -1329,143 +927,90 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssTerm
     {
-        private char? m_separator;
-        private char? m_sign;
-        private CssTermType m_type;
-        private string m_val;
-        private CssUnit? m_unit;
-        private CssFunction m_function;
+        public char? Separator { get; set; }
 
-        public char? Separator
-        {
-            get {
-                return m_separator;
-            }
-            set {
-                m_separator = value;
-            }
-        }
         public string SeparatorChar
         {
-            get {
-                return m_separator.HasValue ? this.m_separator.Value.ToString() : null;
+            get
+            {
+                return Separator.HasValue ? Separator.Value.ToString() : null;
             }
-            set {
-                m_separator = !string.IsNullOrEmpty(value) ? value[0] : '\0';
+            set
+            {
+                Separator = !string.IsNullOrEmpty(value) ? value[0] : '\0';
             }
         }
 
-        public char? Sign
-        {
-            get {
-                return m_sign;
-            }
-            set {
-                m_sign = value;
-            }
-        }
+        public char? Sign { get; set; }
+
         public string SignChar
         {
-            get {
-                return this.m_sign.HasValue ? this.m_sign.Value.ToString() : null;
+            get
+            {
+                return Sign.HasValue ? Sign.Value.ToString() : null;
             }
-            set {
-                this.m_sign = !string.IsNullOrEmpty(value) ? value[0] : '\0';
-            }
-        }
-
-        public CssTermType Type
-        {
-            get {
-                return m_type;
-            }
-            set {
-                m_type = value;
+            set
+            {
+                Sign = !string.IsNullOrEmpty(value) ? value[0] : '\0';
             }
         }
 
-        public string Value
-        {
-            get {
-                return m_val;
-            }
-            set {
-                m_val = value;
-            }
-        }
+        public CssTermType Type { get; set; }
 
-        public CssUnit? Unit
-        {
-            get {
-                return m_unit;
-            }
-            set {
-                m_unit = value;
-            }
-        }
+        public string Value { get; set; }
+
+        public CssUnit? Unit { get; set; }
+
         public string UnitString
         {
-            get {
-                if (this.m_unit.HasValue)
-                {
-                    return this.m_unit.ToString();
-                }
-                else
-                {
-                    return null;
-                }
+            get
+            {
+                return Unit.HasValue ? Unit.ToString() : null;
             }
-            set {
-                this.m_unit = (CssUnit)Enum.Parse(typeof(CssUnit), value);
+            set
+            {
+                Unit = (CssUnit)Enum.Parse(typeof(CssUnit), value);
             }
         }
 
-        public CssFunction Function
-        {
-            get {
-                return m_function;
-            }
-            set {
-                m_function = value;
-            }
-        }
+        public CssFunction Function { get; set; }
 
         public override string ToString()
         {
             StringBuilder sb = new StringBuilder();
 
-            if (m_type == CssTermType.Function)
+            if (Type == CssTermType.Function)
             {
-                sb.Append(m_function.ToString());
+                sb.Append(Function.ToString());
             }
-            else if (m_type == CssTermType.Url)
+            else if (Type == CssTermType.Url)
             {
-                sb.AppendFormat("url('{0}')", m_val);
+                sb.AppendFormat("url('{0}')", Value);
             }
-            else if (m_type == CssTermType.Unicode)
+            else if (Type == CssTermType.Unicode)
             {
-                sb.AppendFormat("U\\{0}", m_val.ToUpper());
+                sb.AppendFormat("U\\{0}", Value.ToUpper());
             }
-            else if (m_type == CssTermType.Hex)
+            else if (Type == CssTermType.Hex)
             {
-                sb.Append(m_val.ToUpper());
+                sb.Append(Value.ToUpper());
             }
             else
             {
-                if (m_sign.HasValue)
+                if (Sign.HasValue)
                 {
-                    sb.Append(m_sign.Value);
+                    sb.Append(Sign.Value);
                 }
-                sb.Append(m_val);
-                if (m_unit.HasValue)
+                sb.Append(Value);
+                if (Unit.HasValue)
                 {
-                    if (m_unit.Value == OpenXmlPowerTools.HtmlToWml.CSS.CssUnit.Percent)
+                    if (Unit.Value == CSS.CssUnit.Percent)
                     {
-                        sb.Append("%");
+                        sb.Append('%');
                     }
                     else
                     {
-                        sb.Append(CssUnitOutput.ToString(m_unit.Value));
+                        sb.Append(CssUnitOutput.ToString(Unit.Value));
                     }
                 }
             }
@@ -1477,13 +1022,13 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         {
             get
             {
-                if (((m_type == CssTermType.Hex)
-                    || (m_type == CssTermType.String && m_val.StartsWith("#")))
-                    && (m_val.Length == 6 || m_val.Length == 3 || ((m_val.Length == 7 || m_val.Length == 4)
-                    && m_val.StartsWith("#"))))
+                if (((Type == CssTermType.Hex)
+                    || (Type == CssTermType.String && Value.StartsWith("#")))
+                    && (Value.Length == 6 || Value.Length == 3 || ((Value.Length == 7 || Value.Length == 4)
+                    && Value.StartsWith("#"))))
                 {
                     bool hex = true;
-                    foreach (char c in m_val)
+                    foreach (char c in Value)
                     {
                         if (!char.IsDigit(c)
                             && c != '#'
@@ -1506,10 +1051,10 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     }
                     return hex;
                 }
-                else if (m_type == CssTermType.String)
+                else if (Type == CssTermType.String)
                 {
                     bool number = true;
-                    foreach (char c in m_val)
+                    foreach (char c in Value)
                     {
                         if (!char.IsDigit(c))
                         {
@@ -1517,39 +1062,40 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                             break;
                         }
                     }
-                    if (number) {
+                    if (number)
+                    {
                         return false;
                     }
 
-                    if (ColorParser.IsValidName(m_val))
+                    if (ColorParser.IsValidName(Value))
                     {
                         return true;
                     }
                 }
-                else if (m_type == CssTermType.Function)
+                else if (Type == CssTermType.Function)
                 {
-                    if ((m_function.Name.ToLower().Equals("rgb") && m_function.Expression.Terms.Count == 3)
-                        || (m_function.Name.ToLower().Equals("rgba") && m_function.Expression.Terms.Count == 4)
+                    if ((Function.Name.ToLower().Equals("rgb") && Function.Expression.Terms.Count == 3)
+                        || (Function.Name.ToLower().Equals("rgba") && Function.Expression.Terms.Count == 4)
                         )
                     {
-                        for (int i = 0; i < m_function.Expression.Terms.Count; i++)
+                        for (int i = 0; i < Function.Expression.Terms.Count; i++)
                         {
-                            if (m_function.Expression.Terms[i].Type != CssTermType.Number) 
-                            { 
-                                return false; 
+                            if (Function.Expression.Terms[i].Type != CssTermType.Number)
+                            {
+                                return false;
                             }
                         }
                         return true;
                     }
-                    else if ((m_function.Name.ToLower().Equals("hsl") && m_function.Expression.Terms.Count == 3)
-                      || (m_function.Name.ToLower().Equals("hsla") && m_function.Expression.Terms.Count == 4)
+                    else if ((Function.Name.ToLower().Equals("hsl") && Function.Expression.Terms.Count == 3)
+                      || (Function.Name.ToLower().Equals("hsla") && Function.Expression.Terms.Count == 4)
                       )
                     {
-                        for (int i = 0; i < m_function.Expression.Terms.Count; i++)
+                        for (int i = 0; i < Function.Expression.Terms.Count; i++)
                         {
-                            if (m_function.Expression.Terms[i].Type != CssTermType.Number) 
-                            { 
-                                return false; 
+                            if (Function.Expression.Terms[i].Type != CssTermType.Number)
+                            {
+                                return false;
                             }
                         }
                         return true;
@@ -1559,84 +1105,94 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        private int GetRGBValue(CssTerm t)
+        private static byte GetRGBValue(CssTerm t)
         {
             try
             {
-                if (t.Unit.HasValue && t.Unit.Value == OpenXmlPowerTools.HtmlToWml.CSS.CssUnit.Percent)
+                if (t.Unit.HasValue && t.Unit.Value == CssUnit.Percent)
                 {
-                    return (int)(255f * float.Parse(t.Value) / 100f);
+                    return (byte)(255f * float.Parse(t.Value) / 100f);
                 }
-                return int.Parse(t.Value);
+                return byte.Parse(t.Value);
             }
             catch { }
             return 0;
         }
 
-        private int GetHueValue(CssTerm t)
+        private static byte GetHueValue(CssTerm t)
         {
             try
             {
-                return (int)(float.Parse(t.Value) * 255f / 360f);
+                return (byte)(float.Parse(t.Value) * 255f / 360f);
             }
             catch { }
             return 0;
         }
 
-        public Color ToColor()
+        public SKColor ToColor()
         {
             string hex = "000000";
-            if (m_type == CssTermType.Hex)
+            if (Type == CssTermType.Hex)
             {
-                if ((m_val.Length == 7 || m_val.Length == 4) && m_val.StartsWith("#"))
+                if ((Value.Length == 7 || Value.Length == 4) && Value.StartsWith("#"))
                 {
-                    hex = m_val.Substring(1);
+                    hex = Value.Substring(1);
                 }
-                else if (m_val.Length == 6 || m_val.Length == 3)
+                else if (Value.Length == 6 || Value.Length == 3)
                 {
-                    hex = m_val;
+                    hex = Value;
                 }
             }
-            else if (m_type == CssTermType.Function)
+            else if (Type == CssTermType.Function)
             {
-                if ((m_function.Name.ToLower().Equals("rgb") && m_function.Expression.Terms.Count == 3)
-                    || (m_function.Name.ToLower().Equals("rgba") && m_function.Expression.Terms.Count == 4)
+                if ((Function.Name.ToLower().Equals("rgb") && Function.Expression.Terms.Count == 3)
+                    || (Function.Name.ToLower().Equals("rgba") && Function.Expression.Terms.Count == 4)
                     )
                 {
-                    int fr = 0, fg = 0, fb = 0;
-                    for (int i = 0; i < m_function.Expression.Terms.Count; i++)
+                    byte fr = 0, fg = 0, fb = 0;
+                    for (int i = 0; i < Function.Expression.Terms.Count; i++)
                     {
-                        if (m_function.Expression.Terms[i].Type != CssTermType.Number) 
-                        { 
-                            return Color.Black; 
+                        if (Function.Expression.Terms[i].Type != CssTermType.Number)
+                        {
+                            return SKColors.Black;
                         }
                         switch (i)
                         {
-                            case 0: fr = GetRGBValue(m_function.Expression.Terms[i]); 
+                            case 0:
+                                fr = GetRGBValue(Function.Expression.Terms[i]);
                                 break;
-                            case 1: fg = GetRGBValue(m_function.Expression.Terms[i]); 
+
+                            case 1:
+                                fg = GetRGBValue(Function.Expression.Terms[i]);
                                 break;
-                            case 2: fb = GetRGBValue(m_function.Expression.Terms[i]); 
+
+                            case 2:
+                                fb = GetRGBValue(Function.Expression.Terms[i]);
                                 break;
                         }
                     }
-                    return Color.FromArgb(fr, fg, fb);
+                    return new SKColor(fr, fg, fb);
                 }
-                else if ((m_function.Name.ToLower().Equals("hsl") && m_function.Expression.Terms.Count == 3)
-                  || (m_function.Name.Equals("hsla") && m_function.Expression.Terms.Count == 4)
+                else if ((Function.Name.ToLower().Equals("hsl") && Function.Expression.Terms.Count == 3)
+                  || (Function.Name.Equals("hsla") && Function.Expression.Terms.Count == 4)
                   )
                 {
-                    int h = 0, s = 0, v = 0;
-                    for (int i = 0; i < m_function.Expression.Terms.Count; i++)
+                    byte h = 0, s = 0, v = 0;
+                    for (int i = 0; i < Function.Expression.Terms.Count; i++)
                     {
-                        if (m_function.Expression.Terms[i].Type != CssTermType.Number) { return Color.Black; }
+                        if (Function.Expression.Terms[i].Type != CssTermType.Number) { return SKColors.Black; }
                         switch (i)
                         {
-                            case 0: h = GetHueValue(m_function.Expression.Terms[i]); 
+                            case 0:
+                                h = GetHueValue(Function.Expression.Terms[i]);
                                 break;
-                            case 1: s = GetRGBValue(m_function.Expression.Terms[i]); 
+
+                            case 1:
+                                s = GetRGBValue(Function.Expression.Terms[i]);
                                 break;
-                            case 2: v = GetRGBValue(m_function.Expression.Terms[i]); 
+
+                            case 2:
+                                v = GetRGBValue(Function.Expression.Terms[i]);
                                 break;
                         }
                     }
@@ -1646,10 +1202,8 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
             else
             {
-                if (ColorParser.TryFromName(m_val, out var c))
-                {
+                if (ColorParser.TryFromName(Value, out var c))
                     return c;
-                }
             }
             if (hex.Length == 3)
             {
@@ -1660,42 +1214,29 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 hex = temp;
             }
-            int r = ConvertFromHex(hex.Substring(0, 2));
-            int g = ConvertFromHex(hex.Substring(2, 2));
-            int b = ConvertFromHex(hex.Substring(4));
-            return Color.FromArgb(r, g, b);
+            var r = ConvertFromHex(hex.Substring(0, 2));
+            var g = ConvertFromHex(hex.Substring(2, 2));
+            var b = ConvertFromHex(hex.Substring(4));
+            return new SKColor(r, g, b);
         }
-        private int ConvertFromHex(string input)
+
+        private static byte ConvertFromHex(string input)
         {
             int val;
             int result = 0;
             for (int i = 0; i < input.Length; i++)
             {
                 string chunk = input.Substring(i, 1).ToUpper();
-                switch (chunk)
+                val = chunk switch
                 {
-                    case "A":
-                        val = 10; 
-                        break;
-                    case "B":
-                        val = 11; 
-                        break;
-                    case "C":
-                        val = 12; 
-                        break;
-                    case "D":
-                        val = 13; 
-                        break;
-                    case "E":
-                        val = 14; 
-                        break;
-                    case "F":
-                        val = 15; 
-                        break;
-                    default:
-                        val = int.Parse(chunk); 
-                        break;
-                }
+                    "A" => 10,
+                    "B" => 11,
+                    "C" => 12,
+                    "D" => 13,
+                    "E" => 14,
+                    "F" => 15,
+                    _ => int.Parse(chunk),
+                };
                 if (i == 0)
                 {
                     result += val * 16;
@@ -1705,7 +1246,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     result += val;
                 }
             }
-            return result;
+            return (byte)result;
         }
     }
 
@@ -1779,13 +1320,10 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class CssParser
     {
-        private List<string> m_errors = new List<string>();
-        private CssDocument m_doc;
-
         public CssDocument ParseText(string content)
         {
             MemoryStream mem = new MemoryStream();
-            byte[] bytes = ASCIIEncoding.ASCII.GetBytes(content);
+            byte[] bytes = Encoding.ASCII.GetBytes(content);
             mem.Write(bytes, 0, bytes.Length);
             try
             {
@@ -1804,82 +1342,57 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             Scanner scanner = new Scanner(stream);
             Parser parser = new Parser(scanner);
             parser.Parse();
-            m_doc = parser.CssDoc;
-            return m_doc;
+            CSSDocument = parser.CssDoc;
+            return CSSDocument;
         }
 
-        public CssDocument CSSDocument
-        {
-            get { return m_doc; }
-        }
+        public CssDocument CSSDocument { get; private set; }
 
-        public List<string> Errors
-        {
-            get { return m_errors; }
-        }
+        public List<string> Errors { get; } = new List<string>();
     }
 
     // Hue Sat and Val values from 0 - 255.
     internal struct HueSatVal
     {
-        private int m_hue;
-        private int m_sat;
-        private int m_val;
         public HueSatVal(int h, int s, int v)
         {
-            m_hue = h;
-            m_sat = s;
-            m_val = v;
+            Hue = h;
+            Saturation = s;
+            Value = v;
         }
-        public HueSatVal(Color color)
+
+        public HueSatVal(SKColor color)
         {
-            m_hue = 0;
-            m_sat = 0;
-            m_val = 0;
+            Hue = 0;
+            Saturation = 0;
+            Value = 0;
             ConvertFromRGB(color);
         }
-        public int Hue
+
+        public int Hue { get; set; }
+
+        public int Saturation { get; set; }
+
+        public int Value { get; set; }
+
+        public SKColor Color
         {
-            get {
-                return m_hue;
-            }
-            set {
-                m_hue = value;
-            }
-        }
-        public int Saturation
-        {
-            get {
-                return m_sat;
-            }
-            set {
-                m_sat = value;
-            }
-        }
-        public int Value
-        {
-            get {
-                return m_val;
-            }
-            set {
-                m_val = value;
-            }
-        }
-        public Color Color
-        {
-            get {
+            get
+            {
                 return ConvertToRGB();
             }
-            set {
+            set
+            {
                 ConvertFromRGB(value);
             }
         }
-        private void ConvertFromRGB(Color color)
+
+        private void ConvertFromRGB(SKColor color)
         {
             double min; double max; double delta;
-            double r = (double)color.R / 255.0d;
-            double g = (double)color.G / 255.0d;
-            double b = (double)color.B / 255.0d;
+            double r = color.Red / 255.0d;
+            double g = color.Green / 255.0d;
+            double b = color.Blue / 255.0d;
             double h; double s; double v;
 
             min = Math.Min(Math.Min(r, g), b);
@@ -1917,18 +1430,15 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             Value = (int)(v * 255.0d);
         }
 
-        private Color ConvertToRGB()
+        private SKColor ConvertToRGB()
         {
-            double h;
-            double s;
-            double v;
-            double r = 0;
-            double g = 0;
-            double b = 0;
+            var r = 0d;
+            var g = 0d;
+            var b = 0d;
 
-            h = ((double)Hue / 255.0d * 360.0d) % 360.0d;
-            s = (double)Saturation / 255.0d;
-            v = (double)Value / 255.0d;
+            var h = (Hue / 255.0d * 360.0d) % 360.0d;
+            var s = Saturation / 255.0d;
+            var v = Value / 255.0d;
 
             if (s == 0)
             {
@@ -1962,26 +1472,31 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         g = t;
                         b = p;
                         break;
+
                     case 1:
                         r = q;
                         g = v;
                         b = p;
                         break;
+
                     case 2:
                         r = p;
                         g = v;
                         b = t;
                         break;
+
                     case 3:
                         r = p;
                         g = q;
                         b = v;
                         break;
+
                     case 4:
                         r = t;
                         g = p;
                         b = v;
                         break;
+
                     case 5:
                         r = v;
                         g = p;
@@ -1989,7 +1504,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         break;
                 }
             }
-            return Color.FromArgb((int)(r * 255.0d), (int)(g * 255.0d), (int)(b * 255.0d));
+            return new SKColor((byte)(r * 255.0d), (byte)(g * 255.0d), (byte)(b * 255.0d));
         }
 
         public static bool operator !=(HueSatVal left, HueSatVal right)
@@ -2022,20 +1537,20 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         public const int c_whitespace = 4;
         public const int c_maxT = 49;
 
-        const bool T = true;
-        const bool x = false;
-        const int minErrDist = 2;
+        private const bool T = true;
+        private const bool x = false;
+        private const int minErrDist = 2;
 
         public Scanner m_scanner;
         public Errors m_errors;
 
         public CssToken m_lastRecognizedToken;
         public CssToken m_lookaheadToken;
-        int errDist = minErrDist;
+        private int errDist = minErrDist;
 
         public CssDocument CssDoc;
 
-        bool IsInHex(string value)
+        private bool IsInHex(string value)
         {
             if (value.Length == 7)
             {
@@ -2059,7 +1574,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             return true;
         }
 
-        bool IsUnitOfLength()
+        private bool IsUnitOfLength()
         {
             if (m_lookaheadToken.m_tokenKind != 1)
             {
@@ -2073,7 +1588,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             return units.Contains(m_lookaheadToken.m_tokenValue.ToLower());
         }
 
-        bool IsNumber()
+        private bool IsNumber()
         {
             if (m_lookaheadToken.m_tokenValue.Length > 0)
             {
@@ -2088,9 +1603,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             m_errors = new Errors();
         }
 
-        void SyntaxErr(int n)
+        private void SyntaxErr(int n)
         {
-            if (errDist >= minErrDist) 
+            if (errDist >= minErrDist)
                 m_errors.SyntaxError(m_lookaheadToken.m_tokenLine, m_lookaheadToken.m_tokenColumn, n);
             errDist = 0;
         }
@@ -2102,23 +1617,23 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             errDist = 0;
         }
 
-        void Get()
+        private void Get()
         {
-            for (;;)
+            for (; ; )
             {
                 m_lastRecognizedToken = m_lookaheadToken;
                 m_lookaheadToken = m_scanner.Scan();
-                if (m_lookaheadToken.m_tokenKind <= c_maxT) 
-                { 
-                    ++errDist; 
-                    break; 
+                if (m_lookaheadToken.m_tokenKind <= c_maxT)
+                {
+                    ++errDist;
+                    break;
                 }
 
                 m_lookaheadToken = m_lastRecognizedToken;
             }
         }
 
-        void Expect(int n)
+        private void Expect(int n)
         {
             if (m_lookaheadToken.m_tokenKind == n)
                 Get();
@@ -2128,35 +1643,34 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        bool StartOf(int s)
+        private bool StartOf(int s)
         {
             return set[s, m_lookaheadToken.m_tokenKind];
         }
 
-        void ExpectWeak(int n, int follow)
+        private void ExpectWeak(int n, int follow)
         {
-            if (m_lookaheadToken.m_tokenKind == n) 
+            if (m_lookaheadToken.m_tokenKind == n)
                 Get();
             else
             {
                 SyntaxErr(n);
-                while (!StartOf(follow)) 
+                while (!StartOf(follow))
                     Get();
             }
         }
 
-
-        bool WeakSeparator(int n, int syFol, int repFol)
+        private bool WeakSeparator(int n, int syFol, int repFol)
         {
             int kind = m_lookaheadToken.m_tokenKind;
-            if (kind == n) 
-            { 
-                Get(); 
-                return true; 
+            if (kind == n)
+            {
+                Get();
+                return true;
             }
-            else if (StartOf(repFol)) 
-            { 
-                return false; 
+            else if (StartOf(repFol))
+            {
+                return false;
             }
             else
             {
@@ -2170,8 +1684,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-
-        void Css3()
+        private void Css3()
         {
             CssDoc = new CssDocument();
             CssRuleSet rset = null;
@@ -2222,7 +1735,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void RuleSet(out CssRuleSet rset)
+        private void RuleSet(out CssRuleSet rset)
         {
             rset = new CssRuleSet();
             CssSelector sel = null;
@@ -2268,10 +1781,10 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     {
                         Get();
                     }
-                    if (m_lookaheadToken.m_tokenValue.Equals("}")) 
-                    { 
-                        Get(); 
-                        return; 
+                    if (m_lookaheadToken.m_tokenValue.Equals("}"))
+                    {
+                        Get();
+                        return;
                     }
 
                     Declaration(out dec);
@@ -2297,7 +1810,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void Directive(out CssDirective dir)
+        private void Directive(out CssDirective dir)
         {
             dir = new CssDirective();
             CssDeclaration dec = null;
@@ -2318,26 +1831,32 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             dir.Name += ident;
             switch (dir.Name.ToLower())
             {
-                case "@media": 
-                    dir.Type = CssDirectiveType.Media; 
+                case "@media":
+                    dir.Type = CssDirectiveType.Media;
                     break;
-                case "@import": 
-                    dir.Type = CssDirectiveType.Import; 
+
+                case "@import":
+                    dir.Type = CssDirectiveType.Import;
                     break;
-                case "@charset": 
-                    dir.Type = CssDirectiveType.Charset; 
+
+                case "@charset":
+                    dir.Type = CssDirectiveType.Charset;
                     break;
-                case "@page": 
-                    dir.Type = CssDirectiveType.Page; 
+
+                case "@page":
+                    dir.Type = CssDirectiveType.Page;
                     break;
-                case "@font-face": 
-                    dir.Type = CssDirectiveType.FontFace; 
+
+                case "@font-face":
+                    dir.Type = CssDirectiveType.FontFace;
                     break;
-                case "@namespace": 
-                    dir.Type = CssDirectiveType.Namespace; 
+
+                case "@namespace":
+                    dir.Type = CssDirectiveType.Namespace;
                     break;
-                default: 
-                    dir.Type = CssDirectiveType.Other; 
+
+                default:
+                    dir.Type = CssDirectiveType.Other;
                     break;
             }
 
@@ -2406,10 +1925,10 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                                 {
                                     Get();
                                 }
-                                if (m_lookaheadToken.m_tokenValue.Equals("}")) 
-                                { 
-                                    Get(); 
-                                    return; 
+                                if (m_lookaheadToken.m_tokenValue.Equals("}"))
+                                {
+                                    Get();
+                                    return;
                                 }
                                 Declaration(out dec);
                                 dir.Declarations.Add(dec);
@@ -2464,7 +1983,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             else SyntaxErr(50);
         }
 
-        void QuotedString(out string qs)
+        private void QuotedString(out string qs)
         {
             qs = "";
             if (m_lookaheadToken.m_tokenKind == 7)
@@ -2474,9 +1993,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 {
                     Get();
                     qs += m_lastRecognizedToken.m_tokenValue;
-                    if (m_lookaheadToken.m_tokenValue.Equals("'") && !m_lastRecognizedToken.m_tokenValue.Equals("\\")) 
-                    { 
-                        break; 
+                    if (m_lookaheadToken.m_tokenValue.Equals("'") && !m_lastRecognizedToken.m_tokenValue.Equals("\\"))
+                    {
+                        break;
                     }
                 }
                 Expect(7);
@@ -2488,18 +2007,17 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 {
                     Get();
                     qs += m_lastRecognizedToken.m_tokenValue;
-                    if (m_lookaheadToken.m_tokenValue.Equals("\"") && !m_lastRecognizedToken.m_tokenValue.Equals("\\")) 
-                    { 
-                        break; 
+                    if (m_lookaheadToken.m_tokenValue.Equals("\"") && !m_lastRecognizedToken.m_tokenValue.Equals("\\"))
+                    {
+                        break;
                     }
                 }
                 Expect(8);
             }
             else SyntaxErr(51);
-
         }
 
-        void URI(out string url)
+        private void URI(out string url)
         {
             url = "";
             Expect(9);
@@ -2525,9 +2043,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 {
                     Get();
                     url += m_lastRecognizedToken.m_tokenValue;
-                    if (m_lookaheadToken.m_tokenValue.Equals(")")) 
-                    { 
-                        break; 
+                    if (m_lookaheadToken.m_tokenValue.Equals(")"))
+                    {
+                        break;
                     }
                 }
             }
@@ -2542,7 +2060,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void Medium(out CssMedium m)
+        private void Medium(out CssMedium m)
         {
             m = CssMedium.all;
             switch (m_lookaheadToken.m_tokenKind)
@@ -2611,7 +2129,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void Identity(out string ident)
+        private void Identity(out string ident)
         {
             ident = "";
             switch (m_lookaheadToken.m_tokenKind)
@@ -2686,7 +2204,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             ident += m_lastRecognizedToken.m_tokenValue;
         }
 
-        void Exprsn(out CssExpression exp)
+        private void Exprsn(out CssExpression exp)
         {
             exp = new CssExpression();
             char? sep = null;
@@ -2718,9 +2236,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     }
                 }
                 Term(out trm);
-                if (sep.HasValue) 
-                { 
-                    trm.Separator = sep.Value; 
+                if (sep.HasValue)
+                {
+                    trm.Separator = sep.Value;
                 }
                 exp.Terms.Add(trm);
                 sep = null;
@@ -2732,7 +2250,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void Declaration(out CssDeclaration dec)
+        private void Declaration(out CssDeclaration dec)
         {
             dec = new CssDeclaration();
             CssExpression exp = null;
@@ -2776,7 +2294,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void Selector(out CssSelector sel)
+        private void Selector(out CssSelector sel)
         {
             sel = new CssSelector();
             CssSimpleSelector ss = null;
@@ -2813,9 +2331,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     Get();
                 }
                 SimpleSelector(out ss);
-                if (cb.HasValue) 
-                { 
-                    ss.Combinator = cb.Value; 
+                if (cb.HasValue)
+                {
+                    ss.Combinator = cb.Value;
                 }
                 sel.SimpleSelectors.Add(ss);
 
@@ -2827,7 +2345,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void SimpleSelector(out CssSimpleSelector ss)
+        private void SimpleSelector(out CssSimpleSelector ss)
         {
             ss = new CssSimpleSelector();
             ss.ElementName = "";
@@ -2862,13 +2380,13 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         ss.ID = "-";
                     }
                     Identity(out ident);
-                    if (ss.ID == null) 
-                    { 
-                        ss.ID = ident; 
-                    } 
-                    else 
-                    { 
-                        ss.ID += ident; 
+                    if (ss.ID == null)
+                    {
+                        ss.ID = ident;
+                    }
+                    else
+                    {
+                        ss.ID += ident;
                     }
                 }
                 else if (m_lookaheadToken.m_tokenKind == 34)
@@ -2940,11 +2458,10 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                 }
                 parent.Child = child;
                 parent = child;
-
             }
         }
 
-        void Attrib(out OpenXmlPowerTools.HtmlToWml.CSS.CssAttribute atb)
+        private void Attrib(out OpenXmlPowerTools.HtmlToWml.CSS.CssAttribute atb)
         {
             atb = new OpenXmlPowerTools.HtmlToWml.CSS.CssAttribute();
             atb.Value = "";
@@ -3031,7 +2548,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             Expect(42);
         }
 
-        void Pseudo(out string pseudo)
+        private void Pseudo(out string pseudo)
         {
             pseudo = "";
             CssExpression exp = null;
@@ -3072,7 +2589,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        void Term(out CssTerm trm)
+        private void Term(out CssTerm trm)
         {
             trm = new CssTerm();
             string val = "";
@@ -3296,7 +2813,6 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                                 {
                                     m_errors.SemanticError(m_lastRecognizedToken.m_tokenLine, m_lastRecognizedToken.m_tokenColumn, string.Format("Unrecognized unit '{0}'", ident));
                                 }
-
                             }
                         }
                     }
@@ -3307,7 +2823,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             else SyntaxErr(60);
         }
 
-        void HexValue(out string val)
+        private void HexValue(out string val)
         {
             val = "";
             bool found = false;
@@ -3344,31 +2860,30 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             Expect(0);
         }
 
-        static readonly bool[,] set = {
-		    {T,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,T, T,x,x,x, x,x,x,x, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,x,x,x, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
-		    {x,T,x,T, T,x,x,T, T,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,T,T,T, x,T,x,x, x,T,T,x, x,x,x,x, x,x,x,x, x,x,T,T, T,x,x},
-		    {x,x,x,x, x,x,x,x, x,x,x,x, T,T,T,T, T,T,T,T, T,T,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,T, T,x,x,x, T,x,x,x, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,T,T,T, T,T,T,x, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
-		    {x,T,T,T, T,T,T,T, x,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
-		    {x,T,T,T, T,T,T,T, T,T,x,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
-		    {x,T,T,T, x,T,T,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
-		    {x,T,x,T, T,x,x,T, T,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,T,x,x, x,T,x,x, x,T,T,x, x,x,x,x, x,x,x,x, x,x,T,T, T,x,x},
-		    {x,T,x,x, T,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,T,T,T, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, T,T,T,T, T,T,x,x, x,x,x,x, x,x,x},
-		    {x,T,x,T, T,x,x,T, T,T,x,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x,x, T,T,T,T, x,x,x,x, x,x,x,T, T,x,T,T, T,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
-		    {x,x,x,x, x,x,x,x, x,x,T,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,T,x, T,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
-		    {x,T,x,T, T,x,x,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x,x, T,T,T,T, T,x,x,x, x,x,x,T, T,x,T,T, T,x,x},
-		    {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, T,x,x}
-	    };
+        private static readonly bool[,] set = {
+            {T,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,T, T,x,x,x, x,x,x,x, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,x,x,x, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
+            {x,T,x,T, T,x,x,T, T,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,T,T,T, x,T,x,x, x,T,T,x, x,x,x,x, x,x,x,x, x,x,T,T, T,x,x},
+            {x,x,x,x, x,x,x,x, x,x,x,x, T,T,T,T, T,T,T,T, T,T,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,T, T,x,x,x, T,x,x,x, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,T,T,T, T,T,T,x, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
+            {x,T,T,T, T,T,T,T, x,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
+            {x,T,T,T, T,T,T,T, T,T,x,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
+            {x,T,T,T, x,T,T,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x},
+            {x,T,x,T, T,x,x,T, T,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,T,x,x, x,T,x,x, x,T,T,x, x,x,x,x, x,x,x,x, x,x,T,T, T,x,x},
+            {x,T,x,x, T,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,T,T,T, T,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,T,T,T, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, T,T,T,T, T,T,x,x, x,x,x,x, x,x,x},
+            {x,T,x,T, T,x,x,T, T,T,x,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x,x, T,T,T,T, x,x,x,x, x,x,x,T, T,x,T,T, T,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x},
+            {x,x,x,x, x,x,x,x, x,x,T,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,T,x, T,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, T,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,T, x,x,x,x, x,x,x},
+            {x,T,x,T, T,x,x,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,T,T, T,T,x,x, T,T,T,T, T,x,x,x, x,x,x,T, T,x,T,T, T,x,x},
+            {x,T,x,x, x,x,x,x, x,T,x,x, T,T,T,T, T,T,T,T, T,T,T,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, x,x,x,x, T,x,x}
+        };
     }
-
 
     public class Errors
     {
@@ -3377,137 +2892,72 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
         public virtual void SyntaxError(int line, int col, int n)
         {
-            string s;
-            switch (n)
+            var s = n switch
             {
-                case 0: s = "EOF expected";
-                    break;
-                case 1: s = "identifier expected";
-                    break;
-                case 2: s = "newline expected";
-                    break;
-                case 3: s = "digit expected";
-                    break;
-                case 4: s = "whitespace expected";
-                    break;
-                case 5: s = "\"<!--\" expected";
-                    break;
-                case 6: s = "\"-->\" expected";
-                    break;
-                case 7: s = "\"\'\" expected";
-                    break;
-                case 8: s = "\"\"\" expected";
-                    break;
-                case 9: s = "\"url\" expected";
-                    break;
-                case 10: s = "\"(\" expected";
-                    break;
-                case 11: s = "\")\" expected";
-                    break;
-                case 12: s = "\"all\" expected";
-                    break;
-                case 13: s = "\"aural\" expected";
-                    break;
-                case 14: s = "\"braille\" expected";
-                    break;
-                case 15: s = "\"embossed\" expected";
-                    break;
-                case 16: s = "\"handheld\" expected";
-                    break;
-                case 17: s = "\"print\" expected";
-                    break;
-                case 18: s = "\"projection\" expected";
-                    break;
-                case 19: s = "\"screen\" expected";
-                    break;
-                case 20: s = "\"tty\" expected";
-                    break;
-                case 21: s = "\"tv\" expected";
-                    break;
-                case 22: s = "\"n\" expected";
-                    break;
-                case 23: s = "\"@\" expected";
-                    break;
-                case 24: s = "\"-\" expected";
-                    break;
-                case 25: s = "\",\" expected";
-                    break;
-                case 26: s = "\"{\" expected";
-                    break;
-                case 27: s = "\";\" expected";
-                    break;
-                case 28: s = "\"}\" expected";
-                    break;
-                case 29: s = "\"+\" expected";
-                    break;
-                case 30: s = "\">\" expected";
-                    break;
-                case 31: s = "\"~\" expected";
-                    break;
-                case 32: s = "\"*\" expected";
-                    break;
-                case 33: s = "\"#\" expected";
-                    break;
-                case 34: s = "\".\" expected";
-                    break;
-                case 35: s = "\"[\" expected";
-                    break;
-                case 36: s = "\"=\" expected";
-                    break;
-                case 37: s = "\"~=\" expected";
-                    break;
-                case 38: s = "\"|=\" expected";
-                    break;
-                case 39: s = "\"$=\" expected";
-                    break;
-                case 40: s = "\"^=\" expected";
-                    break;
-                case 41: s = "\"*=\" expected";
-                    break;
-                case 42: s = "\"]\" expected";
-                    break;
-                case 43: s = "\":\" expected";
-                    break;
-                case 44: s = "\"!\" expected";
-                    break;
-                case 45: s = "\"important\" expected";
-                    break;
-                case 46: s = "\"/\" expected";
-                    break;
-                case 47: s = "\"U\\\\\" expected";
-                    break;
-                case 48: s = "\"%\" expected";
-                    break;
-                case 49: s = "??? expected";
-                    break;
-                case 50: s = "invalid directive";
-                    break;
-                case 51: s = "invalid QuotedString";
-                    break;
-                case 52: s = "invalid URI";
-                    break;
-                case 53: s = "invalid medium";
-                    break;
-                case 54: s = "invalid identity";
-                    break;
-                case 55: s = "invalid simpleselector";
-                    break;
-                case 56: s = "invalid attrib";
-                    break;
-                case 57: s = "invalid term";
-                    break;
-                case 58: s = "invalid term";
-                    break;
-                case 59: s = "invalid term";
-                    break;
-                case 60: s = "invalid term";
-                    break;
-                case 61: s = "invalid HexValue";
-                    break;
-
-                default: s = "error " + n;
-                    break;
-            }
+                0 => "EOF expected",
+                1 => "identifier expected",
+                2 => "newline expected",
+                3 => "digit expected",
+                4 => "whitespace expected",
+                5 => "\"<!--\" expected",
+                6 => "\"-->\" expected",
+                7 => "\"\'\" expected",
+                8 => "\"\"\" expected",
+                9 => "\"url\" expected",
+                10 => "\"(\" expected",
+                11 => "\")\" expected",
+                12 => "\"all\" expected",
+                13 => "\"aural\" expected",
+                14 => "\"braille\" expected",
+                15 => "\"embossed\" expected",
+                16 => "\"handheld\" expected",
+                17 => "\"print\" expected",
+                18 => "\"projection\" expected",
+                19 => "\"screen\" expected",
+                20 => "\"tty\" expected",
+                21 => "\"tv\" expected",
+                22 => "\"n\" expected",
+                23 => "\"@\" expected",
+                24 => "\"-\" expected",
+                25 => "\",\" expected",
+                26 => "\"{\" expected",
+                27 => "\";\" expected",
+                28 => "\"}\" expected",
+                29 => "\"+\" expected",
+                30 => "\">\" expected",
+                31 => "\"~\" expected",
+                32 => "\"*\" expected",
+                33 => "\"#\" expected",
+                34 => "\".\" expected",
+                35 => "\"[\" expected",
+                36 => "\"=\" expected",
+                37 => "\"~=\" expected",
+                38 => "\"|=\" expected",
+                39 => "\"$=\" expected",
+                40 => "\"^=\" expected",
+                41 => "\"*=\" expected",
+                42 => "\"]\" expected",
+                43 => "\":\" expected",
+                44 => "\"!\" expected",
+                45 => "\"important\" expected",
+                46 => "\"/\" expected",
+                47 => "\"U\\\\\" expected",
+                48 => "\"%\" expected",
+                49 => "??? expected",
+                50 => "invalid directive",
+                51 => "invalid QuotedString",
+                52 => "invalid URI",
+                53 => "invalid medium",
+                54 => "invalid identity",
+                55 => "invalid simpleselector",
+                56 => "invalid attrib",
+                57 => "invalid term",
+                58 => "invalid term",
+                59 => "invalid term",
+                60 => "invalid term",
+                61 => "invalid HexValue",
+                _ => "error " + n,
+            };
             var errorString = string.Format(errMsgFormat, line, col, s);
             throw new OpenXmlPowerToolsException(errorString);
         }
@@ -3535,10 +2985,11 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         }
     }
 
-
     public class FatalError : Exception
     {
-        public FatalError(string m) : base(m) { }
+        public FatalError(string m) : base(m)
+        {
+        }
     }
 
     public class CssToken
@@ -3555,77 +3006,80 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
     public class CssBuffer
     {
         public const int EOF = char.MaxValue + 1;
-        const int MIN_BUFFER_LENGTH = 1024;
-        const int MAX_BUFFER_LENGTH = MIN_BUFFER_LENGTH * 64;
-        byte[] m_inputBuffer;
-        int m_bufferStart;
-        int m_bufferLength;
-        int m_inputStreamLength;
-        int m_currentPositionInBuffer;
-        Stream m_inputStream;
-        bool m_isUserStream;
+        private const int MIN_BUFFER_LENGTH = 1024;
+        private const int MAX_BUFFER_LENGTH = MIN_BUFFER_LENGTH * 64;
+        private byte[] _inputBuffer;
+        private int _bufferStart;
+        private int _bufferLength;
+        private int _inputStreamLength;
+        private int _currentPositionInBuffer;
+        private Stream _inputStream;
+        private bool _isUserStream;
 
         public CssBuffer(Stream s, bool isUserStream)
         {
-            m_inputStream = s; this.m_isUserStream = isUserStream;
+            _inputStream = s; _isUserStream = isUserStream;
 
-            if (m_inputStream.CanSeek)
+            if (_inputStream.CanSeek)
             {
-                m_inputStreamLength = (int)m_inputStream.Length;
-                m_bufferLength = Math.Min(m_inputStreamLength, MAX_BUFFER_LENGTH);
-                m_bufferStart = Int32.MaxValue;
+                _inputStreamLength = (int)_inputStream.Length;
+                _bufferLength = Math.Min(_inputStreamLength, MAX_BUFFER_LENGTH);
+                _bufferStart = int.MaxValue;
             }
             else
             {
-                m_inputStreamLength = m_bufferLength = m_bufferStart = 0;
+                _inputStreamLength = _bufferLength = _bufferStart = 0;
             }
 
-            m_inputBuffer = new byte[(m_bufferLength > 0) ? m_bufferLength : MIN_BUFFER_LENGTH];
-            if (m_inputStreamLength > 0)
+            _inputBuffer = new byte[(_bufferLength > 0) ? _bufferLength : MIN_BUFFER_LENGTH];
+            if (_inputStreamLength > 0)
                 Pos = 0;
             else
-                m_currentPositionInBuffer = 0;
-            if (m_bufferLength == m_inputStreamLength && m_inputStream.CanSeek)
+                _currentPositionInBuffer = 0;
+            if (_bufferLength == _inputStreamLength && _inputStream.CanSeek)
                 Close();
         }
 
         protected CssBuffer(CssBuffer b)
         {
-            m_inputBuffer = b.m_inputBuffer;
-            m_bufferStart = b.m_bufferStart;
-            m_bufferLength = b.m_bufferLength;
-            m_inputStreamLength = b.m_inputStreamLength;
-            m_currentPositionInBuffer = b.m_currentPositionInBuffer;
-            m_inputStream = b.m_inputStream;
-            b.m_inputStream = null;
-            m_isUserStream = b.m_isUserStream;
+            _inputBuffer = b._inputBuffer;
+            _bufferStart = b._bufferStart;
+            _bufferLength = b._bufferLength;
+            _inputStreamLength = b._inputStreamLength;
+            _currentPositionInBuffer = b._currentPositionInBuffer;
+            _inputStream = b._inputStream;
+            b._inputStream = null;
+            _isUserStream = b._isUserStream;
         }
 
-        ~CssBuffer() { Close(); }
+        ~CssBuffer()
+        {
+            Close();
+        }
 
         protected void Close()
         {
-            if (!m_isUserStream && m_inputStream != null)
+            if (!_isUserStream && _inputStream != null)
             {
-                m_inputStream.Close();
-                m_inputStream = null;
+                _inputStream.Close();
+                _inputStream = null;
             }
         }
 
         public virtual int Read()
         {
-            if (m_currentPositionInBuffer < m_bufferLength)
+            if (_currentPositionInBuffer < _bufferLength)
             {
-                return m_inputBuffer[m_currentPositionInBuffer++];
+                return _inputBuffer[_currentPositionInBuffer++];
             }
-            else if (Pos < m_inputStreamLength)
+            else if (Pos < _inputStreamLength)
             {
                 Pos = Pos;
-                return m_inputBuffer[m_currentPositionInBuffer++];
+                return _inputBuffer[_currentPositionInBuffer++];
             }
-            else if (m_inputStream != null && !m_inputStream.CanSeek && ReadNextStreamChunk() > 0)
+            else if (_inputStream != null && !_inputStream.CanSeek && ReadNextStreamChunk() > 0)
             {
-                return m_inputBuffer[m_currentPositionInBuffer++];
+                return _inputBuffer[_currentPositionInBuffer++];
             }
             else
             {
@@ -3655,50 +3109,50 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
         public int Pos
         {
-            get { return m_currentPositionInBuffer + m_bufferStart; }
+            get { return _currentPositionInBuffer + _bufferStart; }
             set
             {
-                if (value >= m_inputStreamLength && m_inputStream != null && !m_inputStream.CanSeek)
+                if (value >= _inputStreamLength && _inputStream != null && !_inputStream.CanSeek)
                 {
-                    while (value >= m_inputStreamLength && ReadNextStreamChunk() > 0) ;
+                    while (value >= _inputStreamLength && ReadNextStreamChunk() > 0) ;
                 }
 
-                if (value < 0 || value > m_inputStreamLength)
+                if (value < 0 || value > _inputStreamLength)
                 {
                     throw new FatalError("buffer out of bounds access, position: " + value);
                 }
 
-                if (value >= m_bufferStart && value < m_bufferStart + m_bufferLength)
+                if (value >= _bufferStart && value < _bufferStart + _bufferLength)
                 {
-                    m_currentPositionInBuffer = value - m_bufferStart;
+                    _currentPositionInBuffer = value - _bufferStart;
                 }
-                else if (m_inputStream != null)
+                else if (_inputStream != null)
                 {
-                    m_inputStream.Seek(value, SeekOrigin.Begin);
-                    m_bufferLength = m_inputStream.Read(m_inputBuffer, 0, m_inputBuffer.Length);
-                    m_bufferStart = value; m_currentPositionInBuffer = 0;
+                    _inputStream.Seek(value, SeekOrigin.Begin);
+                    _bufferLength = _inputStream.Read(_inputBuffer, 0, _inputBuffer.Length);
+                    _bufferStart = value; _currentPositionInBuffer = 0;
                 }
                 else
                 {
-                    m_currentPositionInBuffer = m_inputStreamLength - m_bufferStart;
+                    _currentPositionInBuffer = _inputStreamLength - _bufferStart;
                 }
             }
         }
 
         private int ReadNextStreamChunk()
         {
-            int free = m_inputBuffer.Length - m_bufferLength;
+            int free = _inputBuffer.Length - _bufferLength;
             if (free == 0)
             {
-                byte[] newBuf = new byte[m_bufferLength * 2];
-                Array.Copy(m_inputBuffer, newBuf, m_bufferLength);
-                m_inputBuffer = newBuf;
-                free = m_bufferLength;
+                byte[] newBuf = new byte[_bufferLength * 2];
+                Array.Copy(_inputBuffer, newBuf, _bufferLength);
+                _inputBuffer = newBuf;
+                free = _bufferLength;
             }
-            int read = m_inputStream.Read(m_inputBuffer, m_bufferLength, free);
+            int read = _inputStream.Read(_inputBuffer, _bufferLength, free);
             if (read > 0)
             {
-                m_inputStreamLength = m_bufferLength = (m_bufferLength + read);
+                _inputStreamLength = _bufferLength = (_bufferLength + read);
                 return read;
             }
             return 0;
@@ -3707,7 +3161,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class UTF8Buffer : CssBuffer
     {
-        public UTF8Buffer(CssBuffer b) : base(b) { }
+        public UTF8Buffer(CssBuffer b) : base(b)
+        {
+        }
 
         public override int Read()
         {
@@ -3753,28 +3209,28 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
     public class Scanner
     {
-        const char END_OF_LINE = '\n';
-        const int c_eof = 0;
-        const int c_maxT = 49;
-        const int c_noSym = 49;
-        const int c_maxTokenLength = 128;
+        private const char END_OF_LINE = '\n';
+        private const int c_eof = 0;
+        private const int c_maxT = 49;
+        private const int c_noSym = 49;
+        private const int c_maxTokenLength = 128;
 
         public CssBuffer m_scannerBuffer;
 
-        CssToken m_currentToken;
-        int m_currentInputCharacter;
-        int m_currentCharacterBytePosition;
-        int m_unicodeCharacterPosition;
-        int m_columnNumberOfCurrentCharacter;
-        int m_lineNumberOfCurrentCharacter;
-        int m_eolInComment;
-        static readonly Hashtable s_start;
+        private CssToken m_currentToken;
+        private int m_currentInputCharacter;
+        private int m_currentCharacterBytePosition;
+        private int m_unicodeCharacterPosition;
+        private int m_columnNumberOfCurrentCharacter;
+        private int m_lineNumberOfCurrentCharacter;
+        private int m_eolInComment;
+        private static readonly Hashtable s_start;
 
-        CssToken m_tokensAlreadyPeeked;
-        CssToken m_currentPeekToken;
+        private CssToken m_tokensAlreadyPeeked;
+        private CssToken m_currentPeekToken;
 
-        char[] m_textOfCurrentToken = new char[c_maxTokenLength];
-        int m_lengthOfCurrentToken;
+        private char[] m_textOfCurrentToken = new char[c_maxTokenLength];
+        private int m_lengthOfCurrentToken;
 
         static Scanner()
         {
@@ -3828,7 +3284,6 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             s_start[85] = 43;
             s_start[37] = 39;
             s_start[CssBuffer.EOF] = -1;
-
         }
 
         public Scanner(string fileName)
@@ -3851,7 +3306,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             Init();
         }
 
-        void Init()
+        private void Init()
         {
             m_currentCharacterBytePosition = -1;
             m_lineNumberOfCurrentCharacter = 1;
@@ -3877,7 +3332,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             m_currentPeekToken = m_tokensAlreadyPeeked = new CssToken();
         }
 
-        void NextCh()
+        private void NextCh()
         {
             if (m_eolInComment > 0)
             {
@@ -3897,10 +3352,9 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                     m_lineNumberOfCurrentCharacter++; m_columnNumberOfCurrentCharacter = 0;
                 }
             }
-
         }
 
-        void AddCh()
+        private void AddCh()
         {
             if (m_lengthOfCurrentToken >= m_textOfCurrentToken.Length)
             {
@@ -3915,14 +3369,14 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             }
         }
 
-        bool Comment0()
+        private bool Comment0()
         {
             int level = 1, pos0 = m_currentCharacterBytePosition, line0 = m_lineNumberOfCurrentCharacter, col0 = m_columnNumberOfCurrentCharacter, charPos0 = m_unicodeCharacterPosition;
             NextCh();
             if (m_currentInputCharacter == '*')
             {
                 NextCh();
-                for (;;)
+                for (; ; )
                 {
                     if (m_currentInputCharacter == '*')
                     {
@@ -3956,56 +3410,68 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             return false;
         }
 
-
-        void CheckLiteral()
+        private void CheckLiteral()
         {
             switch (m_currentToken.m_tokenValue)
             {
                 case "url":
                     m_currentToken.m_tokenKind = 9;
                     break;
+
                 case "all":
                     m_currentToken.m_tokenKind = 12;
                     break;
+
                 case "aural":
                     m_currentToken.m_tokenKind = 13;
                     break;
+
                 case "braille":
                     m_currentToken.m_tokenKind = 14;
                     break;
+
                 case "embossed":
                     m_currentToken.m_tokenKind = 15;
                     break;
+
                 case "handheld":
                     m_currentToken.m_tokenKind = 16;
                     break;
+
                 case "print":
                     m_currentToken.m_tokenKind = 17;
                     break;
+
                 case "projection":
                     m_currentToken.m_tokenKind = 18;
                     break;
+
                 case "screen":
                     m_currentToken.m_tokenKind = 19;
                     break;
+
                 case "tty":
                     m_currentToken.m_tokenKind = 20;
                     break;
+
                 case "tv":
                     m_currentToken.m_tokenKind = 21;
                     break;
+
                 case "n":
                     m_currentToken.m_tokenKind = 22;
                     break;
+
                 case "important":
                     m_currentToken.m_tokenKind = 45;
                     break;
+
                 default:
                     break;
             }
         }
 
-        CssToken NextToken()
+        private CssToken NextToken()
         {
             while (m_currentInputCharacter == ' ' || m_currentInputCharacter == 10 || m_currentInputCharacter == 13)
                 NextCh();
@@ -4023,7 +3489,8 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             {
                 state = (int)s_start[m_currentInputCharacter];
             }
-            else {
+            else
+            {
                 state = 0;
             }
             m_lengthOfCurrentToken = 0;
@@ -4031,10 +3498,11 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
 
             switch (state)
             {
-                case -1: {
-                    m_currentToken.m_tokenKind = c_eof;
-                    break;
-                }
+                case -1:
+                    {
+                        m_currentToken.m_tokenKind = c_eof;
+                        break;
+                    }
                 case 0:
                     {
                         if (recKind != c_noSym)
@@ -4089,7 +3557,8 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         AddCh();
                         goto case 7;
                     }
-                    else {
+                    else
+                    {
                         goto case 0;
                     }
                 case 7:
@@ -4208,7 +3677,8 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         AddCh();
                         goto case 28;
                     }
-                    else {
+                    else
+                    {
                         goto case 0;
                     }
                 case 28:
@@ -4222,7 +3692,8 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         AddCh();
                         goto case 30;
                     }
-                    else {
+                    else
+                    {
                         goto case 0;
                     }
                 case 30:
@@ -4338,7 +3809,6 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
                         CheckLiteral();
                         return m_currentToken;
                     }
-
             }
             m_currentToken.m_tokenValue = new String(m_textOfCurrentToken, 0, m_lengthOfCurrentToken);
             return m_currentToken;
@@ -4369,10 +3839,7 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
         {
             do
             {
-                if (m_currentPeekToken.m_nextToken == null)
-                {
-                    m_currentPeekToken.m_nextToken = NextToken();
-                }
+                m_currentPeekToken.m_nextToken ??= NextToken();
                 m_currentPeekToken = m_currentPeekToken.m_nextToken;
             } while (m_currentPeekToken.m_tokenKind > c_maxT);
 
@@ -4384,5 +3851,4 @@ namespace OpenXmlPowerTools.HtmlToWml.CSS
             m_currentPeekToken = m_tokensAlreadyPeeked;
         }
     }
-
 }

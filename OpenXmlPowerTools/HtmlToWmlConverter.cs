@@ -2,18 +2,12 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
-using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
-using OpenXmlPowerTools;
 using OpenXmlPowerTools.HtmlToWml;
-using OpenXmlPowerTools.HtmlToWml.CSS;
-using System.Text.RegularExpressions;
 
 namespace OpenXmlPowerTools
 {
@@ -60,7 +54,7 @@ namespace OpenXmlPowerTools
             return HtmlToWmlConverterCore.ConvertHtmlToWml(defaultCss, authorCss, userCss, xhtml, settings, emptyDocument, annotatedHtmlDumpFileName);
         }
 
-        private static string s_Blank_wml_base64 = @"UEsDBBQABgAIAAAAIQAJJIeCgQEAAI4FAAATAAgCW0NvbnRlbnRfVHlwZXNdLnhtbCCiBAIooAAC
+        private static readonly string _blank_wml_base64 = @"UEsDBBQABgAIAAAAIQAJJIeCgQEAAI4FAAATAAgCW0NvbnRlbnRfVHlwZXNdLnhtbCCiBAIooAAC
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -299,16 +293,14 @@ ABMkAAB3b3JkL3N0eWxlcy54bWxQSwECLQAUAAYACAAAACEATbb2nsIBAACiBAAAEgAAAAAAAAAA
 AAAAAABELQAAd29yZC9mb250VGFibGUueG1sUEsBAi0AFAAGAAgAAAAhAE5wytZwAQAAxQIAABAA
 AAAAAAAAAAAAAAAANi8AAGRvY1Byb3BzL2FwcC54bWxQSwUGAAAAAAwADAAJAwAA3DEAAAAA";
 
-        private static WmlDocument s_EmptyDocument = null;
+        private static WmlDocument _emptyDocument = null;
 
         public static WmlDocument EmptyDocument
         {
-            get {
-                if (s_EmptyDocument == null)
-                {
-                    s_EmptyDocument = new WmlDocument("EmptyDocument.docx", Convert.FromBase64String(s_Blank_wml_base64));
-                }
-                return s_EmptyDocument;
+            get 
+            {
+                _emptyDocument ??= new WmlDocument("EmptyDocument.docx", Convert.FromBase64String(_blank_wml_base64));
+                return _emptyDocument;
             }
         }
 
@@ -323,39 +315,36 @@ AAAAAAAAAAAAAAAANi8AAGRvY1Byb3BzL2FwcC54bWxQSwUGAAAAAAwADAAJAwAA3DEAAAAA";
             using (MemoryStream ms = new MemoryStream())
             {
                 ms.Write(wmlDocument.DocumentByteArray, 0, wmlDocument.DocumentByteArray.Length);
-                using (WordprocessingDocument wDoc = WordprocessingDocument.Open(ms, false))
-                {
-                    string majorLatinFont, minorLatinFont;
-                    double defaultFontSize;
-                    GetDefaultFontInfo(wDoc, out majorLatinFont, out minorLatinFont, out defaultFontSize);
-                    settings.MajorLatinFont = majorLatinFont;
-                    settings.MinorLatinFont = minorLatinFont;
-                    settings.DefaultFontSize = defaultFontSize;
+                using WordprocessingDocument wDoc = WordprocessingDocument.Open(ms, false);
 
-                    settings.MinorLatinFont = "Times New Roman";
-                    settings.DefaultFontSize = 12d;
-                    settings.DefaultBlockContentMargin = "auto";
-                    settings.DefaultSpacingElement = new XElement(W.spacing,
-                        new XAttribute(W.before, 100),
-                        new XAttribute(W.beforeAutospacing, 1),
-                        new XAttribute(W.after, 100),
-                        new XAttribute(W.afterAutospacing, 1),
-                        new XAttribute(W.line, 240),
-                        new XAttribute(W.lineRule, "auto"));
-                    settings.DefaultSpacingElementForParagraphsInTables = new XElement(W.spacing,
-                        new XAttribute(W.before, 100),
-                        new XAttribute(W.beforeAutospacing, 1),
-                        new XAttribute(W.after, 100),
-                        new XAttribute(W.afterAutospacing, 1),
-                        new XAttribute(W.line, 240),
-                        new XAttribute(W.lineRule, "auto"));
+                GetDefaultFontInfo(wDoc, out var majorLatinFont, out var minorLatinFont, out var defaultFontSize);
+                settings.MajorLatinFont = majorLatinFont;
+                settings.MinorLatinFont = minorLatinFont;
+                settings.DefaultFontSize = defaultFontSize;
 
-                    XDocument mXDoc = wDoc.MainDocumentPart.GetXDocument();
-                    XElement existingSectPr = mXDoc.Root.Descendants(W.sectPr).FirstOrDefault();
-                    settings.SectPr = new XElement(W.sectPr,
-                        existingSectPr.Elements(W.pgSz),
-                        existingSectPr.Elements(W.pgMar));
-                }
+                settings.MinorLatinFont = "Times New Roman";
+                settings.DefaultFontSize = 12d;
+                settings.DefaultBlockContentMargin = "auto";
+                settings.DefaultSpacingElement = new XElement(W.spacing,
+                    new XAttribute(W.before, 100),
+                    new XAttribute(W.beforeAutospacing, 1),
+                    new XAttribute(W.after, 100),
+                    new XAttribute(W.afterAutospacing, 1),
+                    new XAttribute(W.line, 240),
+                    new XAttribute(W.lineRule, "auto"));
+                settings.DefaultSpacingElementForParagraphsInTables = new XElement(W.spacing,
+                    new XAttribute(W.before, 100),
+                    new XAttribute(W.beforeAutospacing, 1),
+                    new XAttribute(W.after, 100),
+                    new XAttribute(W.afterAutospacing, 1),
+                    new XAttribute(W.line, 240),
+                    new XAttribute(W.lineRule, "auto"));
+
+                XDocument mXDoc = wDoc.MainDocumentPart.GetXDocument();
+                XElement existingSectPr = mXDoc.Root.Descendants(W.sectPr).FirstOrDefault();
+                settings.SectPr = new XElement(W.sectPr,
+                    existingSectPr.Elements(W.pgSz),
+                    existingSectPr.Elements(W.pgMar));
             }
             return settings;
         }
@@ -373,8 +362,7 @@ AAAAAAAAAAAAAAAANi8AAGRvY1Byb3BzL2FwcC54bWxQSwUGAAAAAAwADAAJAwAA3DEAAAAA";
                         .Elements(W.rPrDefault).Elements(W.rPr).Elements(W.sz).Attributes(W.val).FirstOrDefault();
                     if (defaultFontSizeString != null)
                     {
-                        double dfs;
-                        if (double.TryParse(defaultFontSizeString, out dfs))
+                        if (double.TryParse(defaultFontSizeString, out var dfs))
                         {
                             defaultFontSize = dfs / 2d;
                             return;
@@ -514,19 +502,19 @@ AAAAAAAAAAAAAAAANi8AAGRvY1Byb3BzL2FwcC54bWxQSwUGAAAAAAwADAAJAwAA3DEAAAAA";
 
     public class SizeEmu
     {
-        public Emu m_Height;
-        public Emu m_Width;
+        public Emu Height { get; set; }
+        public Emu Width { get; set; }
 
         public SizeEmu(Emu width, Emu height)
         {
-            m_Width = width;
-            m_Height = height;
+            Width = width;
+            Height = height;
         }
 
         public SizeEmu(long width, long height)
         {
-            m_Width = width;
-            m_Height = height;
+            Width = width;
+            Height = height;
         }
     }
 }

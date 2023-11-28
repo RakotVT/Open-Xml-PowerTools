@@ -4,14 +4,16 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.IO.Packaging;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
+using DocumentFormat.OpenXml.Experimental;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
-using System.Globalization;
+using SkiaSharp;
 
 namespace OpenXmlPowerTools
 {
@@ -25,12 +27,6 @@ namespace OpenXmlPowerTools
 
     public class MetricsGetter
     {
-        private static Lazy<Graphics> Graphics { get; } = new Lazy<Graphics>(() =>
-        {
-            Image image = new Bitmap(1, 1);
-            return System.Drawing.Graphics.FromImage(image);
-        });
-
         public static XElement GetMetrics(string fileName, MetricsGetterSettings settings)
         {
             FileInfo fi = new FileInfo(fileName);
@@ -58,20 +54,16 @@ namespace OpenXmlPowerTools
         {
             try
             {
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    ms.Write(wmlDoc.DocumentByteArray, 0, wmlDoc.DocumentByteArray.Length);
-                    using (WordprocessingDocument document = WordprocessingDocument.Open(ms, true))
-                    {
-                        bool hasTrackedRevisions = RevisionAccepter.HasTrackedRevisions(document);
-                        if (hasTrackedRevisions)
-                            RevisionAccepter.AcceptRevisions(document);
-                        XElement metrics1 = GetWmlMetrics(wmlDoc.FileName, false, document, settings);
-                        if (hasTrackedRevisions)
-                            metrics1.Add(new XElement(H.RevisionTracking, new XAttribute(H.Val, true)));
-                        return metrics1;
-                    }
-                }
+                using var ms = new MemoryStream();
+                ms.Write(wmlDoc.DocumentByteArray, 0, wmlDoc.DocumentByteArray.Length);
+                using var document = WordprocessingDocument.Open(ms, true);
+                bool hasTrackedRevisions = RevisionAccepter.HasTrackedRevisions(document);
+                if (hasTrackedRevisions)
+                    RevisionAccepter.AcceptRevisions(document);
+                XElement metrics1 = GetWmlMetrics(wmlDoc.FileName, false, document, settings);
+                if (hasTrackedRevisions)
+                    metrics1.Add(new XElement(H.RevisionTracking, new XAttribute(H.Val, true)));
+                return metrics1;
             }
             catch (OpenXmlPowerToolsException e)
             {
@@ -80,24 +72,19 @@ namespace OpenXmlPowerTools
                     using (MemoryStream ms = new MemoryStream())
                     {
                         ms.Write(wmlDoc.DocumentByteArray, 0, wmlDoc.DocumentByteArray.Length);
-#if !NET35
-                        UriFixer.FixInvalidUri(ms, brokenUri => FixUri(brokenUri));
-#endif
                         wmlDoc = new WmlDocument("dummy.docx", ms.ToArray());
                     }
                     using (MemoryStream ms = new MemoryStream())
                     {
                         ms.Write(wmlDoc.DocumentByteArray, 0, wmlDoc.DocumentByteArray.Length);
-                        using (WordprocessingDocument document = WordprocessingDocument.Open(ms, true))
-                        {
-                            bool hasTrackedRevisions = RevisionAccepter.HasTrackedRevisions(document);
-                            if (hasTrackedRevisions)
-                                RevisionAccepter.AcceptRevisions(document);
-                            XElement metrics2 = GetWmlMetrics(wmlDoc.FileName, true, document, settings);
-                            if (hasTrackedRevisions)
-                                metrics2.Add(new XElement(H.RevisionTracking, new XAttribute(H.Val, true)));
-                            return metrics2;
-                        }
+                        using WordprocessingDocument document = WordprocessingDocument.Open(ms, true);
+                        bool hasTrackedRevisions = RevisionAccepter.HasTrackedRevisions(document);
+                        if (hasTrackedRevisions)
+                            RevisionAccepter.AcceptRevisions(document);
+                        XElement metrics2 = GetWmlMetrics(wmlDoc.FileName, true, document, settings);
+                        if (hasTrackedRevisions)
+                            metrics2.Add(new XElement(H.RevisionTracking, new XAttribute(H.Val, true)));
+                        return metrics2;
                     }
                 }
             }
@@ -108,16 +95,17 @@ namespace OpenXmlPowerTools
             return metrics;
         }
 
-        private static int _getTextWidth(FontFamily ff, FontStyle fs, decimal sz, string text)
+        private static int GetTextWidthInner(SKTypeface ff, float sz, string text)
         {
             try
             {
-                using (var f = new Font(ff, (float)sz / 2f, fs))
-                {
-                    var proposedSize = new Size(int.MaxValue, int.MaxValue);
-                    var sf = Graphics.Value.MeasureString(text, f, proposedSize);
-                    return (int) sf.Width;
-                }
+                using var paint = new SKPaint();
+                paint.Typeface = ff;
+                paint.TextSize = sz;
+
+                var skBounds = SKRect.Empty;
+                var textWidth = paint.MeasureText(text.AsSpan(), ref skBounds);
+                return (int)textWidth;
             }
             catch
             {
@@ -125,32 +113,29 @@ namespace OpenXmlPowerTools
             }
         }
 
-        public static int GetTextWidth(FontFamily ff, FontStyle fs, decimal sz, string text)
+        public static int GetTextWidth(SKTypeface ff, float sz, string text)
         {
             try
             {
-                return _getTextWidth(ff, fs, sz, text);
+                return GetTextWidthInner(ff, sz, text);
             }
             catch (ArgumentException)
             {
                 try
                 {
-                    const FontStyle fs2 = FontStyle.Regular;
-                    return _getTextWidth(ff, fs2, sz, text);
+                    return GetTextWidthInner(SKTypeface.FromFamilyName(ff.FamilyName, SKFontStyle.Normal), sz, text);
                 }
                 catch (ArgumentException)
                 {
-                    const FontStyle fs2 = FontStyle.Bold;
                     try
                     {
-                        return _getTextWidth(ff, fs2, sz, text);
+                        return GetTextWidthInner(SKTypeface.FromFamilyName(ff.FamilyName, SKFontStyle.Bold), sz, text);
                     }
                     catch (ArgumentException)
                     {
                         // if both regular and bold fail, then get metrics for Times New Roman
                         // use the original FontStyle (in fs)
-                        var ff2 = new FontFamily("Times New Roman");
-                        return _getTextWidth(ff2, fs, sz, text);
+                        return GetTextWidthInner(SKTypeface.FromFamilyName("Times New Roman", ff.FontStyle), sz, text);
                     }
                 }
             }
@@ -189,8 +174,7 @@ namespace OpenXmlPowerTools
 
         private static XElement RetrieveContentTypeList(OpenXmlPackage oxPkg)
         {
-            Package pkg = oxPkg.Package;
-
+            var pkg = oxPkg.GetPackage();
             var nonRelationshipParts = pkg.GetParts().Cast<ZipPackagePart>().Where(p => p.ContentType != "application/vnd.openxmlformats-package.relationships+xml");
             var contentTypes = nonRelationshipParts
                 .Select(p => p.ContentType)
@@ -203,8 +187,7 @@ namespace OpenXmlPowerTools
 
         private static XElement RetrieveNamespaceList(OpenXmlPackage oxPkg)
         {
-            Package pkg = oxPkg.Package;
-
+            var pkg = oxPkg.GetPackage();
             var nonRelationshipParts = pkg.GetParts().Cast<ZipPackagePart>().Where(p => p.ContentType != "application/vnd.openxmlformats-package.relationships+xml");
             var xmlParts = nonRelationshipParts
                 .Where(p => p.ContentType.ToLower().EndsWith("xml"));
@@ -226,7 +209,7 @@ namespace OpenXmlPowerTools
                             .Distinct()
                             .ToList();
                         foreach (var item in namespaces)
-		                    uniqueNamespaces.Add(item);
+                            uniqueNamespaces.Add(item);
                     }
                     // if catch exception, forget about it.  Just trying to get a most complete survey possible of all namespaces in all documents.
                     // if caught exception, chances are the document is bad anyway.
@@ -452,7 +435,7 @@ namespace OpenXmlPowerTools
         private static void ValidateImageExists(OpenXmlPart part, string relId, Dictionary<XName, int> metrics)
         {
             var imagePart = part.Parts.FirstOrDefault(ipp => ipp.RelationshipId == relId);
-            if (imagePart == null)
+            if (imagePart == default)
                 IncrementMetric(metrics, H.ReferenceToNullImage);
         }
 

@@ -29,24 +29,22 @@ namespace OpenXmlPowerTools
         public static WmlDocument AssembleDocument(WmlDocument templateDoc, XElement data, out bool templateError)
         {
             byte[] byteArray = templateDoc.DocumentByteArray;
-            using (MemoryStream mem = new MemoryStream())
+            using MemoryStream mem = new MemoryStream();
+            mem.Write(byteArray, 0, byteArray.Length);
+            using (WordprocessingDocument wordDoc = WordprocessingDocument.Open(mem, true))
             {
-                mem.Write(byteArray, 0, byteArray.Length);
-                using (WordprocessingDocument wordDoc = WordprocessingDocument.Open(mem, true))
-                {
-                    if (RevisionAccepter.HasTrackedRevisions(wordDoc))
-                        throw new OpenXmlPowerToolsException("Invalid DocumentAssembler template - contains tracked revisions");
+                if (RevisionAccepter.HasTrackedRevisions(wordDoc))
+                    throw new OpenXmlPowerToolsException("Invalid DocumentAssembler template - contains tracked revisions");
 
-                    var te = new TemplateError();
-                    foreach (var part in wordDoc.ContentParts())
-                    {
-                        ProcessTemplatePart(data, te, part, wordDoc);
-                    }
-                    templateError = te.HasError;
+                var te = new TemplateError();
+                foreach (var part in wordDoc.ContentParts())
+                {
+                    ProcessTemplatePart(data, te, part, wordDoc);
                 }
-                WmlDocument assembledDocument = new WmlDocument("TempFileName.docx", mem.ToArray());
-                return assembledDocument;
+                templateError = te.HasError;
             }
+            WmlDocument assembledDocument = new WmlDocument("TempFileName.docx", mem.ToArray());
+            return assembledDocument;
         }
 
         private static void ProcessTemplatePart(XElement data, TemplateError te, OpenXmlPart part, WordprocessingDocument wDoc)
@@ -295,7 +293,7 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static readonly List<string> _aliasList = new List<string>()
+        private static readonly List<string> _aliasList = new()
         {
             PA.Content.ToString(),
             PA.Image.ToString(),
@@ -497,8 +495,8 @@ namespace OpenXmlPowerTools
                                   <xs:element name='Image'>
                                     <xs:complexType>
                                       <xs:attribute name='Select' type='xs:string' use='required' />
-                                      <xs:attribute name='Width' type='xs:boolean' use='optional' />
-                                      <xs:attribute name='Height' type='xs:boolean' use='optional' />
+                                      <xs:attribute name='Width' type='xs:integer' use='optional' />
+                                      <xs:attribute name='Height' type='xs:integer' use='optional' />
                                     </xs:complexType>
                                   </xs:element>
                                 </xs:schema>",
@@ -592,8 +590,7 @@ namespace OpenXmlPowerTools
             string message = null;
             d.Validate(paSchemaSet.SchemaSet, (sender, e) =>
             {
-                if (message == null)
-                    message = e.Message;
+                message ??= e.Message;
             }, true);
             if (message != null)
                 return message;
@@ -685,7 +682,6 @@ namespace OpenXmlPowerTools
                 if (element.Name == PA.Image)
                 {
                     XElement para = element.Descendants(W.p).FirstOrDefault();
-                    XElement run = element.Descendants(W.r).FirstOrDefault();
 
                     var width = (long)element.Attribute(PA.Width);
                     var height = (long)element.Attribute(PA.Height);
@@ -701,7 +697,9 @@ namespace OpenXmlPowerTools
                         return CreateContextErrorMessage(element, "XPathException: " + e.Message, templateError);
                     }
 
-                    return CreateImage(wDoc, endocodedImage, width, height);
+                    para.Elements(W.r).Remove();
+                    para.Add(CreateImage(wDoc, endocodedImage, width, height));
+                    return para;
                 }
                 if (element.Name == PA.Repeat)
                 {
@@ -746,7 +744,7 @@ namespace OpenXmlPowerTools
                     {
                         return CreateContextErrorMessage(element, "XPathException: " + e.Message, templateError);
                     }
-                    if (tableData.Count() == 0)
+                    if (!tableData.Any())
                         return CreateContextErrorMessage(element, "Table Select returned no data", templateError);
                     XElement table = element.Element(W.tbl);
                     XElement protoRow = table.Elements(W.tr).Skip(1).FirstOrDefault();
@@ -884,11 +882,11 @@ namespace OpenXmlPowerTools
             return run;
         }
         private static XElement GetRunPropertiesForImage()
-            => new XElement(W.rPr, new XElement(W.noProof));
+            => new(W.rPr, new XElement(W.noProof));
 
         private static XElement GetImageAsInline(long width, long height, string rId, int pictureId, string pictureDescription)
         {
-            var size = new SizeEmu((Emu)width, (Emu)height);
+            var size = new SizeEmu(Emu.PointsToEmus(width), Emu.PointsToEmus(height));
             XElement inline = new XElement(WP.inline, // 20.4.2.8
                 new XAttribute(XNamespace.Xmlns + "wp", WP.wp.NamespaceName),
                 new XAttribute(NoNamespace.distT, 0),  // distance from top of image to text, in EMUs, no effect if the parent is inline
@@ -906,8 +904,8 @@ namespace OpenXmlPowerTools
         private static XElement GetImageExtent(SizeEmu szEmu)
         {
             return new XElement(WP.extent,
-                new XAttribute(NoNamespace.cx, (long)szEmu.m_Width),   // in EMUs
-                new XAttribute(NoNamespace.cy, (long)szEmu.m_Height)); // in EMUs
+                new XAttribute(NoNamespace.cx, (long)szEmu.Width),   // in EMUs
+                new XAttribute(NoNamespace.cy, (long)szEmu.Height)); // in EMUs
         }
         private static XElement GetEffectExtent()
         {
@@ -916,39 +914,6 @@ namespace OpenXmlPowerTools
                 new XAttribute(NoNamespace.t, 0),
                 new XAttribute(NoNamespace.r, 0),
                 new XAttribute(NoNamespace.b, 0));
-        }
-
-        private static SizeEmu GetImageSizeInEmus(XElement img, Bitmap bmp)
-        {
-            double hres = bmp.HorizontalResolution;
-            double vres = bmp.VerticalResolution;
-            Size s = bmp.Size;
-            Emu cx = (long)((double)(s.Width / hres) * Emu.s_EmusPerInch);
-            Emu cy = (long)((double)(s.Height / vres) * Emu.s_EmusPerInch);
-
-            CssExpression width = img.GetProp("width");
-            CssExpression height = img.GetProp("height");
-            if (width.IsNotAuto && height.IsAuto)
-            {
-                Emu widthInEmus = (Emu)width;
-                double percentChange = (float)widthInEmus / (float)cx;
-                cx = widthInEmus;
-                cy = (long)(cy * percentChange);
-                return new SizeEmu(cx, cy);
-            }
-            if (width.IsAuto && height.IsNotAuto)
-            {
-                Emu heightInEmus = (Emu)height;
-                double percentChange = (float)heightInEmus / (float)cy;
-                cy = heightInEmus;
-                cx = (long)(cx * percentChange);
-                return new SizeEmu(cx, cy);
-            }
-            if (width.IsNotAuto && height.IsNotAuto)
-            {
-                return new SizeEmu((Emu)width, (Emu)height);
-            }
-            return new SizeEmu(cx, cy);
         }
 
         private static XElement GetDocPr(int pictureId, string pictureDescription)
@@ -996,7 +961,7 @@ namespace OpenXmlPowerTools
                             new XAttribute(NoNamespace.bwMode, "auto"),
                             new XElement(A.xfrm,
                                 new XElement(A.off, new XAttribute(NoNamespace.x, 0), new XAttribute(NoNamespace.y, 0)),
-                                new XElement(A.ext, new XAttribute(NoNamespace.cx, (long)szEmu.m_Width), new XAttribute(NoNamespace.cy, (long)szEmu.m_Height))),
+                                new XElement(A.ext, new XAttribute(NoNamespace.cx, (long)szEmu.Width), new XAttribute(NoNamespace.cy, (long)szEmu.Height))),
                             new XElement(A.prstGeom, new XAttribute(NoNamespace.prst, "rect"),
                                 new XElement(A.avLst)),
                             new XElement(A.noFill),
@@ -1052,7 +1017,7 @@ namespace OpenXmlPowerTools
                 throw new XPathException("XPathException: " + e.Message, e);
             }
 
-            if ((xPathSelectResult is IEnumerable enumerable) && !(xPathSelectResult is string))
+            if ((xPathSelectResult is IEnumerable enumerable) && xPathSelectResult is not string)
             {
                 var selectedData = enumerable.Cast<XObject>();
                 if (!selectedData.Any())

@@ -89,8 +89,10 @@ namespace OpenXmlPowerTools
                 return new PmlDocument(fileName, bytes);
             if (type == typeof(Package))
             {
-                OpenXmlPowerToolsDocument pkg = new OpenXmlPowerToolsDocument(bytes);
-                pkg.FileName = fileName;
+                OpenXmlPowerToolsDocument pkg = new OpenXmlPowerToolsDocument(bytes)
+                {
+                    FileName = fileName
+                };
                 return pkg;
             }
             throw new PowerToolsDocumentException("Not an Open XML document.");
@@ -131,13 +133,13 @@ namespace OpenXmlPowerTools
 
         public OpenXmlPowerToolsDocument(string fileName)
         {
-            this.FileName = fileName;
+            FileName = fileName;
             DocumentByteArray = File.ReadAllBytes(fileName);
         }
 
         public OpenXmlPowerToolsDocument(string fileName, bool convertToTransitional)
         {
-            this.FileName = fileName;
+            FileName = fileName;
 
             if (convertToTransitional)
             {
@@ -146,7 +148,7 @@ namespace OpenXmlPowerTools
             }
             else
             {
-                this.FileName = fileName;
+                FileName = fileName;
                 DocumentByteArray = File.ReadAllBytes(fileName);
             }
         }
@@ -163,73 +165,71 @@ namespace OpenXmlPowerTools
                 throw new PowerToolsDocumentException("Not an Open XML document.");
             }
 
-            using (MemoryStream ms = new MemoryStream())
+            using MemoryStream ms = new MemoryStream();
+            ms.Write(tempByteArray, 0, tempByteArray.Length);
+            if (type == typeof(WordprocessingDocument))
             {
-                ms.Write(tempByteArray, 0, tempByteArray.Length);
-                if (type == typeof(WordprocessingDocument))
+                using (WordprocessingDocument sDoc = WordprocessingDocument.Open(ms, true))
                 {
-                    using (WordprocessingDocument sDoc = WordprocessingDocument.Open(ms, true))
+                    // following code forces the SDK to serialize
+                    foreach (var part in sDoc.Parts)
                     {
-                        // following code forces the SDK to serialize
-                        foreach (var part in sDoc.Parts)
+                        try
                         {
-                            try
-                            {
-                                var z = part.OpenXmlPart.RootElement;
-                            }
-                            catch (Exception)
-                            {
-                                continue;
-                            }
+                            var z = part.OpenXmlPart.RootElement;
+                        }
+                        catch (Exception)
+                        {
+                            continue;
                         }
                     }
                 }
-                else if (type == typeof(SpreadsheetDocument))
-                {
-                    using (SpreadsheetDocument sDoc = SpreadsheetDocument.Open(ms, true))
-                    {
-                        // following code forces the SDK to serialize
-                        foreach (var part in sDoc.Parts)
-                        {
-                            try
-                            {
-                                var z = part.OpenXmlPart.RootElement;
-                            }
-                            catch (Exception)
-                            {
-                                continue;
-                            }
-                        }
-                    }
-                }
-                else if (type == typeof(PresentationDocument))
-                {
-                    using (PresentationDocument sDoc = PresentationDocument.Open(ms, true))
-                    {
-                        // following code forces the SDK to serialize
-                        foreach (var part in sDoc.Parts)
-                        {
-                            try
-                            {
-                                var z = part.OpenXmlPart.RootElement;
-                            }
-                            catch (Exception)
-                            {
-                                continue;
-                            }
-                        }
-                    }
-                }
-                this.FileName = fileName;
-                DocumentByteArray = ms.ToArray();
             }
+            else if (type == typeof(SpreadsheetDocument))
+            {
+                using (SpreadsheetDocument sDoc = SpreadsheetDocument.Open(ms, true))
+                {
+                    // following code forces the SDK to serialize
+                    foreach (var part in sDoc.Parts)
+                    {
+                        try
+                        {
+                            var z = part.OpenXmlPart.RootElement;
+                        }
+                        catch (Exception)
+                        {
+                            continue;
+                        }
+                    }
+                }
+            }
+            else if (type == typeof(PresentationDocument))
+            {
+                using (PresentationDocument sDoc = PresentationDocument.Open(ms, true))
+                {
+                    // following code forces the SDK to serialize
+                    foreach (var part in sDoc.Parts)
+                    {
+                        try
+                        {
+                            var z = part.OpenXmlPart.RootElement;
+                        }
+                        catch (Exception)
+                        {
+                            continue;
+                        }
+                    }
+                }
+            }
+            this.FileName = fileName;
+            DocumentByteArray = ms.ToArray();
         }
 
         public OpenXmlPowerToolsDocument(byte[] byteArray)
         {
             DocumentByteArray = new byte[byteArray.Length];
             Array.Copy(byteArray, DocumentByteArray, byteArray.Length);
-            this.FileName = null;
+            FileName = null;
         }
 
         public OpenXmlPowerToolsDocument(byte[] byteArray, bool convertToTransitional)
@@ -242,7 +242,7 @@ namespace OpenXmlPowerTools
             {
                 DocumentByteArray = new byte[byteArray.Length];
                 Array.Copy(byteArray, DocumentByteArray, byteArray.Length);
-                this.FileName = null;
+                FileName = null;
             }
         }
 
@@ -282,9 +282,9 @@ namespace OpenXmlPowerTools
 
         public void Save()
         {
-            if (this.FileName == null)
+            if (FileName == null)
                 throw new InvalidOperationException("Attempting to Save a document that has no file name.  Use SaveAs instead.");
-            File.WriteAllBytes(this.FileName, DocumentByteArray);
+            File.WriteAllBytes(FileName, DocumentByteArray);
         }
 
         public void WriteByteArray(Stream stream)
@@ -299,41 +299,24 @@ namespace OpenXmlPowerTools
 
         private static Type GetDocumentType(byte[] bytes)
         {
-            using (MemoryStream stream = new MemoryStream())
+            using MemoryStream stream = new MemoryStream();
+            stream.Write(bytes, 0, bytes.Length);
+            using (Package package = Package.Open(stream, FileMode.Open))
             {
-                stream.Write(bytes, 0, bytes.Length);
-                using (Package package = Package.Open(stream, FileMode.Open))
+                PackageRelationship relationship = package.GetRelationshipsByType("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument").FirstOrDefault();
+                relationship ??= package.GetRelationshipsByType("http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument").FirstOrDefault();
+                if (relationship != null)
                 {
-                    PackageRelationship relationship = package.GetRelationshipsByType("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument").FirstOrDefault();
-                    if (relationship == null)
-                        relationship = package.GetRelationshipsByType("http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument").FirstOrDefault();
-                    if (relationship != null)
+                    PackagePart part = package.GetPart(PackUriHelper.ResolvePartUri(relationship.SourceUri, relationship.TargetUri));
+                    return part.ContentType switch
                     {
-                        PackagePart part = package.GetPart(PackUriHelper.ResolvePartUri(relationship.SourceUri, relationship.TargetUri));
-                        switch (part.ContentType)
-                        {
-                            case "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml":
-                            case "application/vnd.ms-word.document.macroEnabled.main+xml":
-                            case "application/vnd.ms-word.template.macroEnabledTemplate.main+xml":
-                            case "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml":
-                                return typeof(WordprocessingDocument);
-                            case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml":
-                            case "application/vnd.ms-excel.sheet.macroEnabled.main+xml":
-                            case "application/vnd.ms-excel.template.macroEnabled.main+xml":
-                            case "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml":
-                                return typeof(SpreadsheetDocument);
-                            case "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml":
-                            case "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml":
-                            case "application/vnd.ms-powerpoint.template.macroEnabled.main+xml":
-                            case "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml":
-                            case "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml":
-                            case "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml":
-                                return typeof(PresentationDocument);
-                        }
-                        return typeof(Package);
-                    }
-                    return null;
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" or "application/vnd.ms-word.document.macroEnabled.main+xml" or "application/vnd.ms-word.template.macroEnabledTemplate.main+xml" or "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml" => typeof(WordprocessingDocument),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml" or "application/vnd.ms-excel.sheet.macroEnabled.main+xml" or "application/vnd.ms-excel.template.macroEnabled.main+xml" or "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml" => typeof(SpreadsheetDocument),
+                        "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml" or "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml" or "application/vnd.ms-powerpoint.template.macroEnabled.main+xml" or "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml" or "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml" or "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml" => typeof(PresentationDocument),
+                        _ => typeof(Package),
+                    };
                 }
+                return null;
             }
         }
 
@@ -555,7 +538,7 @@ namespace OpenXmlPowerTools
         public static OpenXmlMemoryStreamDocument CreateWordprocessingDocument()
         {
             MemoryStream stream = new MemoryStream();
-            using (WordprocessingDocument doc = WordprocessingDocument.Create(stream, DocumentFormat.OpenXml.WordprocessingDocumentType.Document))
+            using (var doc = WordprocessingDocument.Create(stream, DocumentFormat.OpenXml.WordprocessingDocumentType.Document))
             {
                 doc.AddMainDocumentPart();
                 doc.MainDocumentPart.PutXDocument(new XDocument(
@@ -563,14 +546,14 @@ namespace OpenXmlPowerTools
                         new XAttribute(XNamespace.Xmlns + "w", W.w),
                         new XAttribute(XNamespace.Xmlns + "r", R.r),
                         new XElement(W.body))));
-                doc.Close();
-                return new OpenXmlMemoryStreamDocument(stream);
             }
+            return new OpenXmlMemoryStreamDocument(stream);
         }
+
         public static OpenXmlMemoryStreamDocument CreateSpreadsheetDocument()
         {
             MemoryStream stream = new MemoryStream();
-            using (SpreadsheetDocument doc = SpreadsheetDocument.Create(stream, DocumentFormat.OpenXml.SpreadsheetDocumentType.Workbook))
+            using (var doc = SpreadsheetDocument.Create(stream, DocumentFormat.OpenXml.SpreadsheetDocumentType.Workbook))
             {
                 doc.AddWorkbookPart();
                 XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -580,14 +563,14 @@ namespace OpenXmlPowerTools
                         new XAttribute("xmlns", ns),
                         new XAttribute(XNamespace.Xmlns + "r", relationshipsns),
                         new XElement(ns + "sheets"))));
-                doc.Close();
-                return new OpenXmlMemoryStreamDocument(stream);
             }
+
+            return new OpenXmlMemoryStreamDocument(stream);
         }
         public static OpenXmlMemoryStreamDocument CreatePresentationDocument()
         {
             MemoryStream stream = new MemoryStream();
-            using (PresentationDocument doc = PresentationDocument.Create(stream, DocumentFormat.OpenXml.PresentationDocumentType.Presentation))
+            using (var doc = PresentationDocument.Create(stream, DocumentFormat.OpenXml.PresentationDocumentType.Presentation))
             {
                 doc.AddPresentationPart();
                 XNamespace ns = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -600,10 +583,9 @@ namespace OpenXmlPowerTools
                         new XAttribute(XNamespace.Xmlns + "p", ns),
                         new XElement(ns + "sldMasterIdLst"),
                         new XElement(ns + "sldIdLst"),
-                        new XElement(ns + "notesSz", new XAttribute("cx", "6858000"), new XAttribute("cy", "9144000")))));
-                doc.Close();
-                return new OpenXmlMemoryStreamDocument(stream);
+                        new XElement(ns + "notesSz", new XAttribute("cx", "6858000"), new XAttribute("cy", "9144000"))))); 
             }
+            return new OpenXmlMemoryStreamDocument(stream);
         }
 
         public static OpenXmlMemoryStreamDocument CreatePackage()
@@ -663,39 +645,24 @@ namespace OpenXmlPowerTools
         public Type GetDocumentType()
         {
             PackageRelationship relationship = DocPackage.GetRelationshipsByType("http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument").FirstOrDefault();
-            if (relationship == null)
-                relationship = DocPackage.GetRelationshipsByType("http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument").FirstOrDefault();
+            relationship ??= DocPackage.GetRelationshipsByType("http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument").FirstOrDefault();
             if (relationship == null)
                 throw new PowerToolsDocumentException("Not an Open XML Document.");
             PackagePart part = DocPackage.GetPart(PackUriHelper.ResolvePartUri(relationship.SourceUri, relationship.TargetUri));
-            switch (part.ContentType)
+            return part.ContentType switch
             {
-                case "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml":
-                case "application/vnd.ms-word.document.macroEnabled.main+xml":
-                case "application/vnd.ms-word.template.macroEnabledTemplate.main+xml":
-                case "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml":
-                    return typeof(WordprocessingDocument);
-                case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml":
-                case "application/vnd.ms-excel.sheet.macroEnabled.main+xml":
-                case "application/vnd.ms-excel.template.macroEnabled.main+xml":
-                case "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml":
-                    return typeof(SpreadsheetDocument);
-                case "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml":
-                case "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml":
-                case "application/vnd.ms-powerpoint.template.macroEnabled.main+xml":
-                case "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml":
-                case "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml":
-                case "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml":
-                    return typeof(PresentationDocument);
-            }
-            return null;
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" or "application/vnd.ms-word.document.macroEnabled.main+xml" or "application/vnd.ms-word.template.macroEnabledTemplate.main+xml" or "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml" => typeof(WordprocessingDocument),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml" or "application/vnd.ms-excel.sheet.macroEnabled.main+xml" or "application/vnd.ms-excel.template.macroEnabled.main+xml" or "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml" => typeof(SpreadsheetDocument),
+                "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml" or "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml" or "application/vnd.ms-powerpoint.template.macroEnabled.main+xml" or "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml" or "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml" or "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml" => typeof(PresentationDocument),
+                _ => null,
+            };
         }
 
         public OpenXmlPowerToolsDocument GetModifiedDocument()
         {
             DocPackage.Close();
             DocPackage = null;
-            return new OpenXmlPowerToolsDocument((Document == null) ? null : Document.FileName, DocMemoryStream);
+            return new OpenXmlPowerToolsDocument(Document?.FileName, DocMemoryStream);
         }
 
         public WmlDocument GetModifiedWmlDocument()
@@ -734,18 +701,12 @@ namespace OpenXmlPowerTools
             Dispose(false);
         }
 
-        private void Dispose(Boolean disposing)
+        private void Dispose(bool disposing)
         {
             if (disposing)
             {
-                if (DocPackage != null)
-                {
-                    DocPackage.Close();
-                }
-                if (DocMemoryStream != null)
-                {
-                    DocMemoryStream.Dispose();
-                }
+                DocPackage?.Close();
+                DocMemoryStream?.Dispose();
             }
             if (DocPackage == null && DocMemoryStream == null)
                 return;

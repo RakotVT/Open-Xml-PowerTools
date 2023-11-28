@@ -2,35 +2,36 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Drawing;
+using SkiaSharp;
 
-namespace OpenXmlPowerTools
+namespace OpenXmlPowerTools;
+
+public static class ColorParser
 {
-    public static class ColorParser
+    public static SKColor FromName(string name)
     {
-        public static Color FromName(string name)
+        var skColor = typeof(SKColors).GetField(name); 
+        if (skColor != null) 
+            return (SKColor)skColor.GetValue(null)!; 
+        return SKColors.Empty;
+    }
+
+    public static bool TryFromName(string name, out SKColor color)
+    {
+        try
         {
-            return Color.FromName(name);
+            color = FromName(name);
+            return color != default;
         }
-
-        public static bool TryFromName(string name, out Color color)
+        catch
         {
-            try
-            {
-                color = Color.FromName(name);
-
-                return color.IsNamedColor;
-            }
-            catch
-            {
-                color = default(Color);
-
-                return false;
-            }
+            color = default;
+            return false;
         }
+    }
 
-        public static bool IsValidName(string name)
-        {
-            return TryFromName(name, out _);
-        }
+    public static bool IsValidName(string name)
+    {
+        return TryFromName(name, out _);
     }
 }
