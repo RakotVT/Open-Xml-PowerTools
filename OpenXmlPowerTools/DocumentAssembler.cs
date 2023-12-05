@@ -4,7 +4,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -14,7 +13,6 @@ using System.Xml.Schema;
 using System.Xml.XPath;
 using DocumentFormat.OpenXml.Packaging;
 using OpenXmlPowerTools.HtmlToWml;
-using OpenXmlPowerTools.HtmlToWml.CSS;
 
 namespace OpenXmlPowerTools
 {
@@ -214,6 +212,7 @@ namespace OpenXmlPowerTools
             foreach (var metadata in xDoc.Descendants().Where(d =>
                     d.Name == PA.Repeat ||
                     d.Name == PA.Conditional ||
+                    d.Name == PA.ConditionalElse ||
                     d.Name == PA.EndRepeat ||
                     d.Name == PA.EndConditional))
             {
@@ -232,6 +231,11 @@ namespace OpenXmlPowerTools
                 if (metadata.Name == PA.Conditional)
                 {
                     ++conditionalDepth;
+                    metadata.Add(new XAttribute(PA.Depth, conditionalDepth));
+                    continue;
+                }
+                if (metadata.Name == PA.ConditionalElse)
+                {
                     metadata.Add(new XAttribute(PA.Depth, conditionalDepth));
                     continue;
                 }
@@ -256,7 +260,7 @@ namespace OpenXmlPowerTools
                         matchingEndName = PA.EndConditional;
                     if (matchingEndName == null)
                         throw new OpenXmlPowerToolsException("Internal error");
-                    var matchingEnd = metadata.ElementsAfterSelf(matchingEndName).FirstOrDefault(end => { return (int)end.Attribute(PA.Depth) == depth; });
+                    var matchingEnd = metadata.ElementsAfterSelf(matchingEndName).FirstOrDefault(x => (int)x.Attribute(PA.Depth) == depth);
                     if (matchingEnd == null)
                     {
                         metadata.ReplaceWith(CreateParaErrorMessage(string.Format("{0} does not have matching {1}", metadata.Name.LocalName, matchingEndName.LocalName), te));
@@ -273,7 +277,7 @@ namespace OpenXmlPowerTools
 
                     if (metadata.Name == PA.Conditional)
                     {
-                        var conditionalElse = metadata.Element(PA.ConditionalElse);
+                        var conditionalElse = metadata.Elements(PA.ConditionalElse).FirstOrDefault(x => (int)x.Attribute(PA.Depth) == depth);
                         if (conditionalElse != null)
                         {
                             conditionalElse.RemoveNodes();
@@ -282,6 +286,7 @@ namespace OpenXmlPowerTools
                                 item.Remove();
                             elseContent = elseContent.Where(n => n.Name != W.bookmarkStart && n.Name != W.bookmarkEnd).ToList();
                             conditionalElse.Add(elseContent);
+                            conditionalElse.Attributes(PA.Depth).Remove();
                         }
                     }
 
@@ -466,135 +471,126 @@ namespace OpenXmlPowerTools
             public string XmlExceptionMessage;
             public string SchemaValidationMessage;
         }
+        private class PASchemaSet
+        {
+            public string XsdMarkup;
+            public XmlSchemaSet SchemaSet;
+
+            public PASchemaSet(string xsdMarkup)
+            {
+                XsdMarkup = xsdMarkup;
+                XmlSchemaSet schemas = new XmlSchemaSet();
+                schemas.Add("", XmlReader.Create(new StringReader(xsdMarkup)));
+                SchemaSet = schemas;
+            }
+        }
+
+        private const string _schemeContent =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='Content'>
+                <xs:complexType>
+                    <xs:attribute name='Select' type='xs:string' use='required' />
+                    <xs:attribute name='Optional' type='xs:boolean' use='optional' />
+                </xs:complexType>
+                </xs:element>
+            </xs:schema>";
+        private const string _schemeImage =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='Image'>
+                <xs:complexType>
+                    <xs:attribute name='Select' type='xs:string' use='required' />
+                    <xs:attribute name='Width' type='xs:integer' use='optional' />
+                    <xs:attribute name='Height' type='xs:integer' use='optional' />
+                </xs:complexType>
+                </xs:element>
+            </xs:schema>";
+        private const string _schemeTable =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='Table'>
+                <xs:complexType>
+                    <xs:attribute name='Select' type='xs:string' use='required' />
+                </xs:complexType>
+                </xs:element>
+            </xs:schema>";
+        private const string _schemeRepeat =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='Repeat'>
+                <xs:complexType>
+                    <xs:attribute name='Select' type='xs:string' use='required' />
+                    <xs:attribute name='Optional' type='xs:boolean' use='optional' />
+                </xs:complexType>
+                </xs:element>
+            </xs:schema>";
+        private const string _schemeEndRepeat =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='EndRepeat' />
+            </xs:schema>";
+        private const string _schemeConditional =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='Conditional'>
+                <xs:complexType>
+                    <xs:attribute name='Select' type='xs:string' use='required' />
+                    <xs:attribute name='Match' type='xs:string' use='optional' />
+                    <xs:attribute name='NotMatch' type='xs:string' use='optional' />
+                    <xs:attribute name='Exists' type='xs:string' use='optional' />
+                </xs:complexType>
+                </xs:element>
+            </xs:schema>";
+        private const string _schemeConditionalElse =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='ConditionalElse' />
+            </xs:schema>";
+        private const string _schemeConditionalEnd =
+            @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
+                <xs:element name='EndConditional' />
+            </xs:schema>";
+        private static readonly Dictionary<XName, PASchemaSet> _pASchemaSets = new()
+        {
+            {
+                PA.Content,
+                new PASchemaSet(_schemeContent)
+            },
+            {
+                PA.Image,
+                new PASchemaSet(_schemeImage)
+            },
+            {
+                PA.Table,
+                new PASchemaSet(_schemeTable)
+            },
+            {
+                PA.Repeat,
+                new PASchemaSet(_schemeRepeat)
+            },
+            {
+                PA.EndRepeat,
+                new PASchemaSet(_schemeEndRepeat)
+            },
+            {
+                PA.Conditional,
+                new PASchemaSet(_schemeConditional)
+            },
+            {
+                PA.ConditionalElse,
+                new PASchemaSet(_schemeConditionalElse)
+            },
+            {
+                PA.EndConditional,
+                new PASchemaSet(_schemeConditionalEnd)
+            },
+        };
 
         private static string ValidatePerSchema(XElement element)
         {
-            if (_pASchemaSets == null)
-            {
-                _pASchemaSets = new Dictionary<XName, PASchemaSet>()
-                {
-                    {
-                        PA.Content,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='Content'>
-                                    <xs:complexType>
-                                      <xs:attribute name='Select' type='xs:string' use='required' />
-                                      <xs:attribute name='Optional' type='xs:boolean' use='optional' />
-                                    </xs:complexType>
-                                  </xs:element>
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.Image,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='Image'>
-                                    <xs:complexType>
-                                      <xs:attribute name='Select' type='xs:string' use='required' />
-                                      <xs:attribute name='Width' type='xs:integer' use='optional' />
-                                      <xs:attribute name='Height' type='xs:integer' use='optional' />
-                                    </xs:complexType>
-                                  </xs:element>
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.Table,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='Table'>
-                                    <xs:complexType>
-                                      <xs:attribute name='Select' type='xs:string' use='required' />
-                                    </xs:complexType>
-                                  </xs:element>
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.Repeat,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='Repeat'>
-                                    <xs:complexType>
-                                      <xs:attribute name='Select' type='xs:string' use='required' />
-                                      <xs:attribute name='Optional' type='xs:boolean' use='optional' />
-                                    </xs:complexType>
-                                  </xs:element>
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.EndRepeat,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='EndRepeat' />
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.Conditional,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='Conditional'>
-                                    <xs:complexType>
-                                      <xs:attribute name='Select' type='xs:string' use='required' />
-                                      <xs:attribute name='Match' type='xs:string' use='optional' />
-                                      <xs:attribute name='NotMatch' type='xs:string' use='optional' />
-                                      <xs:attribute name='Exists' type='xs:string' use='optional' />
-                                    </xs:complexType>
-                                  </xs:element>
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.ConditionalElse,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='ConditionalElse' />
-                                </xs:schema>",
-                        }
-                    },
-                    {
-                        PA.EndConditional,
-                        new PASchemaSet() {
-                            XsdMarkup =
-                              @"<xs:schema attributeFormDefault='unqualified' elementFormDefault='qualified' xmlns:xs='http://www.w3.org/2001/XMLSchema'>
-                                  <xs:element name='EndConditional' />
-                                </xs:schema>",
-                        }
-                    },
-                };
-                foreach (var item in _pASchemaSets)
-                {
-                    var itemPAss = item.Value;
-                    XmlSchemaSet schemas = new XmlSchemaSet();
-                    schemas.Add("", XmlReader.Create(new StringReader(itemPAss.XsdMarkup)));
-                    itemPAss.SchemaSet = schemas;
-                }
-            }
             if (!_pASchemaSets.ContainsKey(element.Name))
-            {
                 return string.Format("Invalid XML: {0} is not a valid element", element.Name.LocalName);
-            }
+
             var paSchemaSet = _pASchemaSets[element.Name];
             XDocument d = new XDocument(element);
             string message = null;
-            d.Validate(paSchemaSet.SchemaSet, (sender, e) =>
-            {
-                message ??= e.Message;
-            }, true);
-            if (message != null)
-                return message;
-            return null;
+            d.Validate(paSchemaSet.SchemaSet, (sender, e) => message ??= e.Message, true);
+
+            return message;
         }
 
         private class PA
@@ -618,17 +614,10 @@ namespace OpenXmlPowerTools
             public static XName Height = "Height";
         }
 
-        private class PASchemaSet
-        {
-            public string XsdMarkup;
-            public XmlSchemaSet SchemaSet;
-        }
-
-        private static Dictionary<XName, PASchemaSet> _pASchemaSets = null;
-
         private class TemplateError
         {
-            public bool HasError = false;
+            public string Message { get; set; }
+            public bool HasError { get; set; } = false;
         }
 
         private static object ContentReplacementTransform(XNode node, XElement data, TemplateError templateError, WordprocessingDocument wDoc)
@@ -881,6 +870,7 @@ namespace OpenXmlPowerTools
                     GetImageAsInline(width, height, rId, pictureId, pictureDescription)));
             return run;
         }
+
         private static XElement GetRunPropertiesForImage()
             => new(W.rPr, new XElement(W.noProof));
 
@@ -907,6 +897,7 @@ namespace OpenXmlPowerTools
                 new XAttribute(NoNamespace.cx, (long)szEmu.Width),   // in EMUs
                 new XAttribute(NoNamespace.cy, (long)szEmu.Height)); // in EMUs
         }
+
         private static XElement GetEffectExtent()
         {
             return new XElement(WP.effectExtent,
@@ -969,6 +960,7 @@ namespace OpenXmlPowerTools
                                 new XElement(A.noFill))))));
             return graphic;
         }
+
         private static object CreateContextErrorMessage(XElement element, string errorMessage, TemplateError templateError)
         {
             XElement para = element.Descendants(W.p).FirstOrDefault();
