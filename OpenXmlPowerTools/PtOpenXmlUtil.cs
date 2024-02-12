@@ -5803,6 +5803,7 @@ listSeparator
         public static XName Leader = pt + "Leader";
 
         public static XName ListItemRun = pt + "ListItemRun";
+        public static XName ListItemParagraph = pt + "ListItemParagraph";
 
         public static XName HtmlToWmlCssWidth = pt + "HtmlToWmlCssWidth";
     }

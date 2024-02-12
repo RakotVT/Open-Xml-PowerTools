@@ -1849,13 +1849,11 @@ namespace OpenXmlPowerTools
         [SuppressMessage("ReSharper", "FunctionComplexityOverflow")]
         private static object CalculateSpanWidthTransform(XNode node, int defaultTabStop)
         {
-            var element = node as XElement;
-            if (element == null) return node;
+            if (node is not XElement element) return node;
 
             // if it is not a paragraph or if there are no tabs in the paragraph,
             // then no need to continue processing.
-            if (element.Name != W.p ||
-                !element.DescendantsTrimmed(W.txbxContent).Where(d => d.Name == W.r).Elements(W.tab).Any())
+            if (element.Name != W.p || element.DescendantsTrimmed(W.txbxContent).Where(d => d.Name == W.r).Elements(W.tab).Any())
             {
                 // TODO: Revisit. Can we just return the node if it is a paragraph that does not have any tab?
                 return new XElement(element.Name,

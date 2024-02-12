@@ -3,29 +3,32 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
 using DocumentFormat.OpenXml.Packaging;
-using System.Drawing;
+using SkiaSharp;
 
 namespace OpenXmlPowerTools
 {
     public class FormattingAssemblerSettings
     {
-        public bool RemoveStyleNamesFromParagraphAndRunProperties;
-        public bool ClearStyles;
-        public bool OrderElementsPerStandard;
-        public bool CreateHtmlConverterAnnotationAttributes;
-        public bool RestrictToSupportedNumberingFormats;
-        public bool RestrictToSupportedLanguages;
-        public ListItemRetrieverSettings ListItemRetrieverSettings;
+        public bool RemoveStyleNamesFromParagraphAndRunProperties { get; set; }
+        public bool ClearStyles { get; set; }
+        public bool OrderElementsPerStandard { get; set; }
+        public bool CreateHtmlConverterAnnotationAttributes { get; set; }
+        public bool RestrictToSupportedNumberingFormats { get; set; }
+        public bool RestrictToSupportedLanguages { get; set; }
+        public bool CalculateTabWidth { get; set; }
+        public ListItemRetrieverSettings ListItemRetrieverSettings { get; set; }
 
         public FormattingAssemblerSettings()
         {
             RemoveStyleNamesFromParagraphAndRunProperties = true;
             ClearStyles = true;
             OrderElementsPerStandard = true;
+            CalculateTabWidth = true;
             CreateHtmlConverterAnnotationAttributes = true;
             RestrictToSupportedNumberingFormats = false;
             RestrictToSupportedLanguages = false;
@@ -74,6 +77,7 @@ namespace OpenXmlPowerTools
                 fai.DefaultTableStyleName = (string)defaultTableStyle.Attribute(W.styleId);
             ListItemRetrieverSettings listItemRetrieverSettings = new ListItemRetrieverSettings();
             AssembleListItemInformation(wDoc, settings.ListItemRetrieverSettings);
+
             foreach (var part in wDoc.ContentParts())
             {
                 var pxd = part.GetXDocument();
@@ -83,18 +87,392 @@ namespace OpenXmlPowerTools
                 AnnotateParagraphs(fai, wDoc, pxd.Root, settings);
                 AnnotateRuns(fai, wDoc, pxd.Root, settings);
             }
+
             NormalizeListItems(fai, wDoc, settings);
+
             if (settings.ClearStyles)
                 ClearStyles(wDoc);
+
             foreach (var part in wDoc.ContentParts())
             {
                 var pxd = part.GetXDocument();
                 pxd.Root.Descendants().Attributes().Where(a => a.IsNamespaceDeclaration).Remove();
-                FormattingAssembler.NormalizePropsForPart(pxd, settings);
+                NormalizePropsForPart(pxd, settings);
                 var newRoot = (XElement)CleanupTransform(pxd.Root);
                 pxd.Root.ReplaceWith(newRoot);
                 part.PutXDocument();
             }
+
+            if (settings.CalculateTabWidth)
+                CalculateSpanWidthForTabs(wDoc);
+        }
+
+        private static void CalculateSpanWidthForTabs(WordprocessingDocument wDoc)
+        {
+            // Note: when implementing a paging version of the HTML transform, this needs to be done
+            // for all content parts, not just the main document part.
+
+            // w:defaultTabStop in settings
+            var sxd = wDoc.MainDocumentPart.DocumentSettingsPart.GetXDocument();
+            var defaultTabStopValue = (string)sxd.Descendants(W.defaultTabStop).Attributes(W.val).FirstOrDefault();
+            var defaultTabStop = defaultTabStopValue != null ? WordprocessingMLUtil.StringToTwips(defaultTabStopValue) : 720;
+            foreach (var part in wDoc.ContentParts())
+            {
+                var pxd = part.GetXDocument();
+                var newRoot = (XElement)CalculateSpanWidthTransform(pxd.Root, defaultTabStop);
+                pxd.Root.ReplaceWith(newRoot);
+                part.PutXDocument();
+            }
+        }
+
+        private static object CalculateSpanWidthTransform(XNode node, int defaultTabStop)
+        {
+            if (node is not XElement element) return node;
+
+            if (element.Name != W.p || !element.DescendantsTrimmed(W.txbxContent).Where(d => d.Name == W.r).Elements(W.tab).Any())
+            {
+                return new XElement(element.Name,
+                    element.Attributes(),
+                    element.Nodes().Select(n => CalculateSpanWidthTransform(n, defaultTabStop)));
+            }
+
+            var clonedPara = new XElement(element);
+
+            var leftInTwips = 0;
+            var firstInTwips = 0;
+
+            var ind = clonedPara.Elements(W.pPr).Elements(W.ind).FirstOrDefault();
+            if (ind != null)
+            {
+                // todo need to handle start and end attributes
+
+                var left = WordprocessingMLUtil.AttributeToTwips(ind.Attribute(W.left));
+                if (left != null)
+                    leftInTwips = (int)left;
+
+                var firstLine = 0;
+                var firstLineAtt = WordprocessingMLUtil.AttributeToTwips(ind.Attribute(W.firstLine));
+                if (firstLineAtt != null)
+                    firstLine = (int)firstLineAtt;
+
+                var hangingAtt = WordprocessingMLUtil.AttributeToTwips(ind.Attribute(W.hanging));
+                if (hangingAtt != null)
+                    firstLine = -(int)hangingAtt;
+
+                firstInTwips = leftInTwips + firstLine;
+            }
+
+            // calculate the tab stops, in twips
+            var tabs = clonedPara
+                .Elements(W.pPr)
+                .Elements(W.tabs)
+                .FirstOrDefault();
+
+            if (tabs == null)
+            {
+                if (leftInTwips == 0)
+                {
+                    tabs = new XElement(W.tabs,
+                        Enumerable.Range(1, 100)
+                            .Select(r => new XElement(W.tab,
+                                new XAttribute(W.val, "left"),
+                                new XAttribute(W.pos, r * defaultTabStop))));
+                }
+                else
+                {
+                    tabs = new XElement(W.tabs,
+                        new XElement(W.tab,
+                            new XAttribute(W.val, "left"),
+                            new XAttribute(W.pos, leftInTwips)));
+                    tabs = AddDefaultTabsAfterLastTab(tabs, defaultTabStop);
+                }
+            }
+            else
+            {
+                if (leftInTwips != 0)
+                {
+                    tabs.Add(
+                        new XElement(W.tab,
+                            new XAttribute(W.val, "left"),
+                            new XAttribute(W.pos, leftInTwips)));
+                }
+                tabs = AddDefaultTabsAfterLastTab(tabs, defaultTabStop);
+            }
+
+            var twipCounter = firstInTwips;
+            var contentToMeasure = element.DescendantsTrimmed(z => z.Name == W.txbxContent || z.Name == W.pPr || z.Name == W.rPr).ToArray();
+            var currentElementIdx = 0;
+            while (true)
+            {
+                var currentElement = contentToMeasure[currentElementIdx];
+
+                if (currentElement.Name == W.br)
+                {
+                    twipCounter = leftInTwips;
+
+                    currentElement.Add(new XAttribute(PtOpenXml.TabWidth, firstInTwips));
+
+                    currentElementIdx++;
+                    if (currentElementIdx >= contentToMeasure.Length)
+                        break; // we're done
+                }
+
+                if (currentElement.Name == W.tab)
+                {
+                    var runContainingTabToReplace = currentElement.Parent;
+                    var fontNameAtt = runContainingTabToReplace.Attribute(PtOpenXml.pt + "FontName") ??
+                                      runContainingTabToReplace.Ancestors(W.p).First().Attribute(PtOpenXml.pt + "FontName");
+
+                    var testAmount = twipCounter;
+
+                    var tabAfterText = tabs
+                        .Elements(W.tab)
+                        .FirstOrDefault(t => WordprocessingMLUtil.StringToTwips((string)t.Attribute(W.pos)) > testAmount);
+
+                    if (tabAfterText == null)
+                    {
+                        // something has gone wrong, so put 1/2 inch in
+                        if (currentElement.Attribute(PtOpenXml.TabWidth) == null)
+                            currentElement.Add(new XAttribute(PtOpenXml.TabWidth, 720m));
+                        break;
+                    }
+
+                    var tabVal = (string)tabAfterText.Attribute(W.val);
+                    if (tabVal == "right" || tabVal == "end")
+                    {
+                        var textAfterElements = contentToMeasure
+                            .Skip(currentElementIdx + 1);
+
+                        // take all the content until another tab, br, or cr
+                        var textElementsToMeasure = textAfterElements
+                            .TakeWhile(z => z.Name != W.tab && z.Name != W.br && z.Name != W.cr).ToList();
+
+                        var textAfterTab = textElementsToMeasure
+                            .Where(z => z.Name == W.t).Select(t => (string)t).StringConcatenate();
+
+                        var dummyRun2 = new XElement(W.r,
+                            fontNameAtt,
+                            runContainingTabToReplace.Elements(W.rPr),
+                            new XElement(W.t, textAfterTab));
+
+                        var widthOfTextAfterTab = MeasureUtils.CalcWidthOfRunInTwips(dummyRun2);
+                        var delta2 = WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) - widthOfTextAfterTab - twipCounter;
+                        if (delta2 < 0)
+                            delta2 = 0;
+
+                        currentElement.Add(new XAttribute(PtOpenXml.TabWidth, delta2), GetLeader(tabAfterText));
+
+                        twipCounter = Math.Max(WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)), twipCounter + widthOfTextAfterTab);
+
+                        var lastElement = textElementsToMeasure.LastOrDefault();
+                        if (lastElement == null)
+                            break; // we're done
+
+                        currentElementIdx = Array.IndexOf(contentToMeasure, lastElement) + 1;
+                        if (currentElementIdx >= contentToMeasure.Length)
+                            break; // we're done
+
+                        continue;
+                    }
+                    if (tabVal == "decimal")
+                    {
+                        var textAfterElements = contentToMeasure
+                            .Skip(currentElementIdx + 1);
+
+                        // take all the content until another tab, br, or cr
+                        var textElementsToMeasure = textAfterElements
+                            .TakeWhile(z => z.Name != W.tab && z.Name != W.br && z.Name != W.cr).ToList();
+
+                        var textAfterTab = textElementsToMeasure
+                            .Where(z => z.Name == W.t).Select(t => (string)t).StringConcatenate();
+
+                        if (textAfterTab.Contains("."))
+                        {
+                            var mantissa = textAfterTab.Split('.')[0];
+
+                            var dummyRun4 = new XElement(W.r,
+                                fontNameAtt,
+                                runContainingTabToReplace.Elements(W.rPr),
+                                new XElement(W.t, mantissa));
+
+                            var widthOfMantissa = MeasureUtils.CalcWidthOfRunInTwips(dummyRun4);
+                            var delta2 = WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) - widthOfMantissa - twipCounter;
+                            if (delta2 < 0)
+                                delta2 = 0;
+                            currentElement.Add(new XAttribute(PtOpenXml.TabWidth, delta2), GetLeader(tabAfterText));
+
+                            var decims = textAfterTab.Substring(textAfterTab.IndexOf('.'));
+                            dummyRun4 = new XElement(W.r,
+                                fontNameAtt,
+                                runContainingTabToReplace.Elements(W.rPr),
+                                new XElement(W.t, decims));
+
+                            var widthOfDecims = MeasureUtils.CalcWidthOfRunInTwips(dummyRun4);
+                            twipCounter = Math.Max(WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) + widthOfDecims, twipCounter + widthOfMantissa + widthOfDecims);
+
+                            var lastElement = textElementsToMeasure.LastOrDefault();
+                            if (lastElement == null)
+                                break; // we're done
+
+                            currentElementIdx = Array.IndexOf(contentToMeasure, lastElement) + 1;
+                            if (currentElementIdx >= contentToMeasure.Length)
+                                break; // we're done
+
+                            continue;
+                        }
+                        else
+                        {
+                            var dummyRun2 = new XElement(W.r,
+                                fontNameAtt,
+                                runContainingTabToReplace.Elements(W.rPr),
+                                new XElement(W.t, textAfterTab));
+
+                            var widthOfTextAfterTab = MeasureUtils.CalcWidthOfRunInTwips(dummyRun2);
+                            var delta2 = WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) - widthOfTextAfterTab - twipCounter;
+                            if (delta2 < 0)
+                                delta2 = 0;
+                            currentElement.Add(new XAttribute(PtOpenXml.TabWidth, delta2), GetLeader(tabAfterText));
+                            twipCounter = Math.Max(WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)), twipCounter + widthOfTextAfterTab);
+
+                            var lastElement = textElementsToMeasure.LastOrDefault();
+                            if (lastElement == null)
+                                break; // we're done
+
+                            currentElementIdx = Array.IndexOf(contentToMeasure, lastElement) + 1;
+                            if (currentElementIdx >= contentToMeasure.Length)
+                                break; // we're done
+
+                            continue;
+                        }
+                    }
+                    if ((string)tabAfterText.Attribute(W.val) == "center")
+                    {
+                        var textAfterElements = contentToMeasure
+                            .Skip(currentElementIdx + 1);
+
+                        // take all the content until another tab, br, or cr
+                        var textElementsToMeasure = textAfterElements
+                            .TakeWhile(z =>
+                                z.Name != W.tab &&
+                                z.Name != W.br &&
+                                z.Name != W.cr)
+                            .ToList();
+
+                        var textAfterTab = textElementsToMeasure
+                            .Where(z => z.Name == W.t)
+                            .Select(t => (string)t)
+                            .StringConcatenate();
+
+                        var dummyRun4 = new XElement(W.r,
+                            fontNameAtt,
+                            runContainingTabToReplace.Elements(W.rPr),
+                            new XElement(W.t, textAfterTab));
+
+                        var widthOfText = MeasureUtils.CalcWidthOfRunInTwips(dummyRun4);
+                        var delta2 = WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) - (widthOfText / 2) - twipCounter;
+                        if (delta2 < 0)
+                            delta2 = 0;
+                        currentElement.Add(new XAttribute(PtOpenXml.TabWidth, delta2), GetLeader(tabAfterText));
+                        twipCounter = Math.Max(WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) + widthOfText / 2, twipCounter + widthOfText);
+
+                        var lastElement = textElementsToMeasure.LastOrDefault();
+                        if (lastElement == null)
+                            break; // we're done
+
+                        currentElementIdx = Array.IndexOf(contentToMeasure, lastElement) + 1;
+                        if (currentElementIdx >= contentToMeasure.Length)
+                            break; // we're done
+
+                        continue;
+                    }
+                    if (tabVal == "left" || tabVal == "start" || tabVal == "num")
+                    {
+                        var delta = WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos)) - twipCounter;
+                        currentElement.Add(new XAttribute(PtOpenXml.TabWidth, delta), GetLeader(tabAfterText));
+                        twipCounter = WordprocessingMLUtil.StringToTwips((string)tabAfterText.Attribute(W.pos));
+
+                        currentElementIdx++;
+                        if (currentElementIdx >= contentToMeasure.Length)
+                            break; // we're done
+
+                        continue;
+                    }
+                }
+
+                if (currentElement.Name == W.t)
+                {
+                    var runContainingTabToReplace = currentElement.Parent;
+                    var paragraphForRun = runContainingTabToReplace.Ancestors(W.p).First();
+                    var fontNameAtt = runContainingTabToReplace.Attribute(PtOpenXml.FontName) ??
+                                      paragraphForRun.Attribute(PtOpenXml.FontName);
+                    var languageTypeAtt = runContainingTabToReplace.Attribute(PtOpenXml.LanguageType) ??
+                                          paragraphForRun.Attribute(PtOpenXml.LanguageType);
+
+                    var dummyRun3 = new XElement(W.r, fontNameAtt, languageTypeAtt,
+                        runContainingTabToReplace.Elements(W.rPr),
+                        currentElement);
+                    var widthOfText = MeasureUtils.CalcWidthOfRunInTwips(dummyRun3);
+
+                    //const int widthOfText = 0;
+                    currentElement.Add(new XAttribute(PtOpenXml.TabWidth, widthOfText));
+                    twipCounter += widthOfText;
+
+                    currentElementIdx++;
+                    if (currentElementIdx >= contentToMeasure.Length)
+                        break; // we're done
+
+                    continue;
+                }
+
+                currentElementIdx++;
+                if (currentElementIdx >= contentToMeasure.Length)
+                    break; // we're done
+            }
+
+            return new XElement(element.Name,
+                element.Attributes(),
+                element.Nodes().Select(n => CalculateSpanWidthTransform(n, defaultTabStop)));
+        }
+
+        private static XElement AddDefaultTabsAfterLastTab(XElement tabs, int defaultTabStop)
+        {
+            var lastTabElement = tabs
+                .Elements(W.tab)
+                .Where(t => (string)t.Attribute(W.val) != "clear" && (string)t.Attribute(W.val) != "bar")
+                .OrderBy(t => WordprocessingMLUtil.StringToTwips((string)t.Attribute(W.pos)))
+                .LastOrDefault();
+            if (lastTabElement != null)
+            {
+                if (defaultTabStop == 0)
+                    defaultTabStop = 720;
+                var rangeStart = WordprocessingMLUtil.StringToTwips((string)lastTabElement.Attribute(W.pos)) / defaultTabStop + 1;
+                var tempTabs = new XElement(W.tabs,
+                    tabs.Elements().Where(t => (string)t.Attribute(W.val) != "clear" && (string)t.Attribute(W.val) != "bar"),
+                    Enumerable.Range(rangeStart, 100)
+                    .Select(r => new XElement(W.tab,
+                        new XAttribute(W.val, "left"),
+                        new XAttribute(W.pos, r * defaultTabStop))));
+                tempTabs = new XElement(W.tabs,
+                    tempTabs.Elements().OrderBy(t => WordprocessingMLUtil.StringToTwips((string)t.Attribute(W.pos))));
+                return tempTabs;
+            }
+            else
+            {
+                tabs = new XElement(W.tabs,
+                    Enumerable.Range(1, 100)
+                    .Select(r => new XElement(W.tab,
+                        new XAttribute(W.val, "left"),
+                        new XAttribute(W.pos, r * defaultTabStop))));
+            }
+            return tabs;
+        }
+
+        private static XAttribute GetLeader(XElement tabAfterText)
+        {
+            var leader = (string)tabAfterText.Attribute(W.leader);
+            if (leader == null)
+                return null;
+            return new XAttribute(PtOpenXml.Leader, leader);
         }
 
         private static void FixNonconformantHexValues(XElement root)
@@ -106,7 +484,7 @@ namespace OpenXmlPowerTools
                 if (tblLook.Attribute(W.val) == null)
                     continue;
                 string hexValue = tblLook.Attribute(W.val).Value;
-                int val = int.Parse(hexValue, System.Globalization.NumberStyles.HexNumber);
+                int val = int.Parse(hexValue, NumberStyles.HexNumber);
                 tblLook.Add(new XAttribute(W.firstRow, (val & 0x0020) != 0 ? "1" : "0"));
                 tblLook.Add(new XAttribute(W.lastRow, (val & 0x0040) != 0 ? "1" : "0"));
                 tblLook.Add(new XAttribute(W.firstColumn, (val & 0x0080) != 0 ? "1" : "0"));
@@ -138,8 +516,7 @@ namespace OpenXmlPowerTools
 
         private static object CleanupTransform(XNode node)
         {
-            XElement element = node as XElement;
-            if (element != null)
+            if (node is XElement element)
             {
                 if (element.Name == W.tabs && element.Element(W.tab) == null)
                     return null;
@@ -185,16 +562,14 @@ namespace OpenXmlPowerTools
                 .Elements(W.rPrDefault)
                 .Elements(W.rPr)
                 .FirstOrDefault();
-            if (globalrPr != null)
-                globalrPr.ReplaceWith(new XElement(W.rPr));
+            globalrPr?.ReplaceWith(new XElement(W.rPr));
 
             var globalpPr = newRoot
                 .Elements(W.docDefaults)
                 .Elements(W.pPrDefault)
                 .Elements(W.pPr)
                 .FirstOrDefault();
-            if (globalpPr != null)
-                globalpPr.ReplaceWith(new XElement(W.pPr));
+            globalpPr?.ReplaceWith(new XElement(W.pPr));
 
             sXDoc.Root.ReplaceWith(newRoot);
 
@@ -217,8 +592,7 @@ namespace OpenXmlPowerTools
 
         private static object NormalizeListItemsTransform(FormattingAssemblerInfo fai, WordprocessingDocument wDoc, XNode node, FormattingAssemblerSettings settings)
         {
-            var element = node as XElement;
-            if (element != null)
+            if (node is XElement element)
             {
                 if (element.Name == W.p)
                 {
@@ -256,8 +630,7 @@ namespace OpenXmlPowerTools
                                     .Attributes(W.styleId)
                                     .FirstOrDefault();
 
-                            if (paragraphStyleName == null)
-                                paragraphStyleName = defaultStyleName;
+                            paragraphStyleName ??= defaultStyleName;
 
                             XDocument stylesXDoc = wDoc
                                 .MainDocumentPart
@@ -563,8 +936,7 @@ namespace OpenXmlPowerTools
                                 .Attributes(W.id)
                                 .Select(id =>
                                 {
-                                    int numId;
-                                    if (int.TryParse((string)id, out numId))
+                                    if (int.TryParse((string)id, out var numId))
                                         return numId;
                                     else
                                         return 0;
@@ -594,13 +966,11 @@ namespace OpenXmlPowerTools
                                     .Attributes(W.id)
                                     .Select(id =>
                                     {
-                                        int numId;
-                                        if (int.TryParse((string)id, out numId))
+                                        if (int.TryParse((string)id, out var numId))
                                             return numId;
                                         else
                                             return 0;
-                                    })
-                                    .Max();
+                                    }).Max();
 
                                 listItemRun = new XElement(W.ins,
                                     new XAttribute(W.id, highestId + 1),
@@ -620,6 +990,7 @@ namespace OpenXmlPowerTools
                             element.Attribute(PtOpenXml.LanguageType),
                             element.Attribute(PtOpenXml.Unid),
                             new XAttribute(PtOpenXml.AbstractNumId, abstractNumId),
+                            new XAttribute(PtOpenXml.ListItemParagraph, levelNumsString),
                             listItemHtmlAttributes,
                             newParaProps,
                             listItemRun,
@@ -639,8 +1010,7 @@ namespace OpenXmlPowerTools
 
         private static object TransformToDeleted(XNode node)
         {
-            XElement element = node as XElement;
-            if (element != null)
+            if (node is XElement element)
             {
                 if (element.Name == W.t)
                     return new XElement(W.delText, element.Value);
@@ -684,6 +1054,7 @@ namespace OpenXmlPowerTools
             PtOpenXml.StyleName,
             PtOpenXml.LanguageType,
             PtOpenXml.ListItemRun,
+            PtOpenXml.ListItemParagraph,
             PtOpenXml.Unid,
         };
 
@@ -793,8 +1164,10 @@ namespace OpenXmlPowerTools
             var tblProps = pxd.Root.Descendants(PtOpenXml.tblPr).ToList();
             foreach (var item in tblProps)
             {
-                XElement newTblProps = new XElement(item);
-                newTblProps.Name = W.tblPr;
+                var newTblProps = new XElement(item)
+                {
+                    Name = W.tblPr
+                };
                 XElement table = item.Parent;
                 XElement existingTableProps = table.Element(W.tblPr);
                 if (existingTableProps != null)
@@ -805,8 +1178,10 @@ namespace OpenXmlPowerTools
             var trProps = pxd.Root.Descendants(PtOpenXml.trPr).ToList();
             foreach (var item in trProps)
             {
-                XElement newTrProps = new XElement(item);
-                newTrProps.Name = W.trPr;
+                var newTrProps = new XElement(item)
+                {
+                    Name = W.trPr
+                };
                 XElement row = item.Parent;
                 XElement existingRowProps = row.Element(W.trPr);
                 if (existingRowProps != null)
@@ -817,8 +1192,10 @@ namespace OpenXmlPowerTools
             var tcProps = pxd.Root.Descendants(PtOpenXml.tcPr).ToList();
             foreach (var item in tcProps)
             {
-                XElement newTcProps = new XElement(item);
-                newTcProps.Name = W.tcPr;
+                var newTcProps = new XElement(item)
+                {
+                    Name = W.tcPr
+                };
                 XElement row = item.Parent;
                 XElement existingRowProps = row.Element(W.tcPr);
                 if (existingRowProps != null)
@@ -877,13 +1254,11 @@ namespace OpenXmlPowerTools
             {
                 globalDefaultParaPropsAsDefined = docDefaults.Elements(W.pPrDefault).Elements(W.pPr)
                     .FirstOrDefault();
-                if (globalDefaultParaPropsAsDefined == null)
-                    globalDefaultParaPropsAsDefined = new XElement(W.pPr,
+                globalDefaultParaPropsAsDefined ??= new XElement(W.pPr,
                         new XElement(W.rPr));
                 globalDefaultRunPropsAsDefined = docDefaults.Elements(W.rPrDefault).Elements(W.rPr)
                     .FirstOrDefault();
-                if (globalDefaultRunPropsAsDefined == null)
-                    globalDefaultRunPropsAsDefined = new XElement(W.rPr);
+                globalDefaultRunPropsAsDefined ??= new XElement(W.rPr);
                 if (globalDefaultRunPropsAsDefined.Element(W.rFonts) == null)
                     globalDefaultRunPropsAsDefined.Add(
                         new XElement(W.rFonts,
@@ -916,11 +1291,9 @@ namespace OpenXmlPowerTools
                             new XElement(W.szCs,
                                 new XAttribute(W.val, "20")));
 
-            if (globalDefaultParaProps == null)
-                globalDefaultParaProps = new XElement(W.pPr, rPr);
+            globalDefaultParaProps ??= new XElement(W.pPr, rPr);
 
-            if (globalDefaultRunProps == null)
-                globalDefaultRunProps = rPr;
+            globalDefaultRunProps ??= rPr;
 
             XElement ptGlobalDefaultParaProps = new XElement(globalDefaultParaProps);
             XElement ptGlobalDefaultRunProps = new XElement(globalDefaultRunProps);
@@ -937,8 +1310,7 @@ namespace OpenXmlPowerTools
                     if (d.Name == W.p)
                     {
                         var pStyle = (string)d.Elements(W.pPr).Elements(W.pStyle).Attributes(W.val).FirstOrDefault();
-                        if (pStyle == null)
-                            pStyle = defaultParaStyleName;
+                        pStyle ??= defaultParaStyleName;
                         if (pStyle != null)
                         {
                             if (d.Attribute(PtOpenXml.StyleName) != null)
@@ -951,8 +1323,7 @@ namespace OpenXmlPowerTools
                     else
                     {
                         var rStyle = (string)d.Elements(W.rPr).Elements(W.rStyle).Attributes(W.val).FirstOrDefault();
-                        if (rStyle == null)
-                            rStyle = defaultCharStyleName;
+                        rStyle ??= defaultCharStyleName;
                         if (rStyle != null)
                         {
                             if (d.Attribute(PtOpenXml.StyleName) != null)
@@ -980,7 +1351,7 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static XElement BlankTcBorders = new XElement(W.tcBorders,
+        private static XElement _blankTcBorders = new(W.tcBorders,
             new XElement(W.top, new XAttribute(W.val, "nil")),
             new XElement(W.left, new XAttribute(W.val, "nil")),
             new XElement(W.bottom, new XAttribute(W.val, "nil")),
@@ -988,13 +1359,13 @@ namespace OpenXmlPowerTools
 
         private static void AnnotateTablesWithTableStyles(WordprocessingDocument wDoc, XElement rootElement)
         {
-            XDocument sXDoc = wDoc.MainDocumentPart.StyleDefinitionsPart.GetXDocument();
+            var sXDoc = wDoc.MainDocumentPart.StyleDefinitionsPart.GetXDocument();
             foreach (var tbl in rootElement.Descendants(W.tbl))
             {
                 string tblStyleName = (string)tbl.Elements(W.tblPr).Elements(W.tblStyle).Attributes(W.val).FirstOrDefault();
                 if (tblStyleName != null)
                 {
-                    XElement style = TableStyleRollup(wDoc, tblStyleName);
+                    var style = TableStyleRollup(wDoc, tblStyleName);
 
                     // annotate table with table style, in PowerTools namespace
                     style.Name = PtOpenXml.style;
@@ -1002,12 +1373,14 @@ namespace OpenXmlPowerTools
 
                     // merge tblPr in table style with tblPr of the table
                     // annnotate in PowerTools namespace
-                    XElement tblPr2 = style.Element(W.tblPr);
-                    XElement tblPr3 = MergeStyleElement(tbl.Element(W.tblPr), tblPr2, true);
+                    var tblPr2 = style.Element(W.tblPr);
+                    var tblPr3 = MergeStyleElement(tbl.Element(W.tblPr), tblPr2, true);
                     if (tblPr3 != null)
                     {
-                        XElement newTblPr = new XElement(tblPr3);
-                        newTblPr.Name = PtOpenXml.pt + "tblPr";
+                        var newTblPr = new XElement(tblPr3)
+                        {
+                            Name = PtOpenXml.pt + "tblPr"
+                        };
                         tbl.Add(newTblPr);
                     }
 
@@ -1028,8 +1401,10 @@ namespace OpenXmlPowerTools
                                 else
                                     tcPrPt = new XElement(W.tcPr);
                                 tcPrPt = MergeStyleElement(tableTcPr, tcPrPt);
-                                var newTcPrPt = new XElement(tcPrPt);
-                                newTcPrPt.Name = PtOpenXml.tcPr;
+                                var newTcPrPt = new XElement(tcPrPt)
+                                {
+                                    Name = PtOpenXml.tcPr
+                                };
                                 if (tcPrPtExists)
                                     cell.Element(PtOpenXml.tcPr).ReplaceWith(newTcPrPt);
                                 else
@@ -1042,16 +1417,14 @@ namespace OpenXmlPowerTools
                     // as appropriate per the cnfStyle element, then replacing the row and cell properties
                     foreach (var row in tbl.Elements(W.tr))
                     {
-                        XElement trPr2 = null;
-                        trPr2 = style.Element(W.trPr);
-                        if (trPr2 == null)
-                            trPr2 = new XElement(W.trPr);
-                        XElement rowCnf = row.Elements(W.trPr).Elements(W.cnfStyle).FirstOrDefault();
+                        var trPr2 = style.Element(W.trPr) ?? new XElement(W.trPr);
+
+                        var rowCnf = row.Elements(W.trPr).Elements(W.cnfStyle).FirstOrDefault();
                         if (rowCnf != null)
                         {
-                            foreach (var ot in TableStyleOverrideTypes)
+                            foreach (var ot in _tableStyleOverrideTypes)
                             {
-                                XName attName = TableStyleOverrideXNameMap[ot];
+                                XName attName = _tableStyleOverrideXNameMap[ot];
                                 if (rowCnf != null && rowCnf.Attribute(attName).ToBoolean() == true)
                                 {
                                     XElement o = style
@@ -1074,9 +1447,9 @@ namespace OpenXmlPowerTools
                         }
                     }
 
-                    foreach (var ot in TableStyleOverrideTypes)
+                    foreach (var ot in _tableStyleOverrideTypes)
                     {
-                        XName attName = TableStyleOverrideXNameMap[ot];
+                        XName attName = _tableStyleOverrideXNameMap[ot];
                         if (attName == W.oddHBand ||
                             attName == W.evenHBand ||
                             attName == W.firstRow ||
@@ -1102,8 +1475,10 @@ namespace OpenXmlPowerTools
                                             else
                                                 tcPrPt = new XElement(W.tcPr);
                                             tcPrPt = MergeStyleElement(o.Element(W.tcPr), tcPrPt);
-                                            var newTcPrPt = new XElement(tcPrPt);
-                                            newTcPrPt.Name = PtOpenXml.pt + "tcPr";
+                                            var newTcPrPt = new XElement(tcPrPt)
+                                            {
+                                                Name = PtOpenXml.pt + "tcPr"
+                                            };
                                             if (tcPrPtExists)
                                                 cell.Element(PtOpenXml.pt + "tcPr").ReplaceWith(newTcPrPt);
                                             else
@@ -1172,11 +1547,13 @@ namespace OpenXmlPowerTools
                 else
                 {
                     var tblPr = new XElement(W.tblPr);
-                    XElement tblPr3 = MergeStyleElement(tbl.Element(W.tblPr), tblPr, true);
+                    var tblPr3 = MergeStyleElement(tbl.Element(W.tblPr), tblPr, true);
                     if (tblPr3 != null)
                     {
-                        XElement newTblPr = new XElement(tblPr3);
-                        newTblPr.Name = PtOpenXml.pt + "tblPr";
+                        var newTblPr = new XElement(tblPr3)
+                        {
+                            Name = PtOpenXml.pt + "tblPr"
+                        };
                         tbl.Add(newTblPr);
                     }
 
@@ -1220,8 +1597,10 @@ namespace OpenXmlPowerTools
                     else
                         tcPrPt = new XElement(W.tcPr);
                     tcPrPt = MergeStyleElement(o.Element(W.tcPr), tcPrPt);
-                    var newTcPrPt = new XElement(tcPrPt);
-                    newTcPrPt.Name = PtOpenXml.pt + "tcPr";
+                    var newTcPrPt = new XElement(tcPrPt)
+                    {
+                        Name = PtOpenXml.pt + "tcPr"
+                    };
                     if (tcPrPtExists)
                         cell.Element(PtOpenXml.pt + "tcPr").ReplaceWith(newTcPrPt);
                     else
@@ -1255,15 +1634,17 @@ namespace OpenXmlPowerTools
                         mTcPr = new XElement(PtOpenXml.pt + "tcPr");
                         cell.Add(tcPr);
                     }
-                    var newTcPr = new XElement(mTcPr);
-                    newTcPr.Name = PtOpenXml.pt + "tcPr";
+                    var newTcPr = new XElement(mTcPr)
+                    {
+                        Name = PtOpenXml.pt + "tcPr"
+                    };
                     var existing = cell.Element(PtOpenXml.pt + "tcPr");
                     if (existing != null)
                         existing.ReplaceWith(newTcPr);
                     else
                         cell.Add(newTcPr);
 
-                    XElement rightCell = cell.ElementsAfterSelf().FirstOrDefault();
+                    var rightCell = cell.ElementsAfterSelf().FirstOrDefault();
                     if (rightCell != null)
                     {
                         RationalizeLeftAndRightCellBorders(cell, rightCell);
@@ -1278,12 +1659,12 @@ namespace OpenXmlPowerTools
             {
                 return;
             }
-            XElement leftTcBorders = leftCell.Elements(W.tcPr).Elements(W.tcBorders).FirstOrDefault();
-            XElement rightTcBorders = rightCell.Elements(W.tcPr).Elements(W.tcBorders).FirstOrDefault();
+            var leftTcBorders = leftCell.Elements(W.tcPr).Elements(W.tcBorders).FirstOrDefault();
+            var rightTcBorders = rightCell.Elements(W.tcPr).Elements(W.tcBorders).FirstOrDefault();
             if (leftTcBorders != null && rightTcBorders != null)
             {
-                XElement rightBorderOfLeft = leftTcBorders.Element(W.right);
-                XElement leftBorderOfRight = rightTcBorders.Element(W.left);
+                var rightBorderOfLeft = leftTcBorders.Element(W.right);
+                var leftBorderOfRight = rightTcBorders.Element(W.left);
                 if (rightBorderOfLeft == null && leftBorderOfRight != null)
                 {
                     leftTcBorders.Add(new XElement(W.right, leftBorderOfRight.Attributes()));
@@ -1415,7 +1796,7 @@ namespace OpenXmlPowerTools
                         var shouldApply = rowCnfStyle.Attribute(attName).ToBoolean();
                         if (shouldApply == true)
                         {
-                            var cndType = TableStyleOverrideXNameRevMap[attName];
+                            var cndType = _tableStyleOverrideXNameRevMap[attName];
                             var cndStyle = style
                                 .Elements(W.tblStylePr)
                                 .FirstOrDefault(tsp => (string)tsp.Attribute(W.type) == cndType);
@@ -1473,7 +1854,7 @@ namespace OpenXmlPowerTools
                             var shouldApply = cellCnfStyle.Attribute(attName).ToBoolean();
                             if (shouldApply == true)
                             {
-                                var cndType = TableStyleOverrideXNameRevMap[attName];
+                                var cndType = _tableStyleOverrideXNameRevMap[attName];
                                 var cndStyle = style
                                     .Elements(W.tblStylePr)
                                     .FirstOrDefault(tsp => (string)tsp.Attribute(W.type) == cndType);
@@ -1599,7 +1980,7 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static Dictionary<string, int> BorderTypePriority = new Dictionary<string, int>()
+        private static readonly Dictionary<string, int> _borderTypePriority = new()
         {
             { "single", 1 },
             { "thick", 2 },
@@ -1607,7 +1988,7 @@ namespace OpenXmlPowerTools
             { "dotted", 4 },
         };
 
-        private static Dictionary<string, int> BorderNumber = new Dictionary<string, int>()
+        private static readonly Dictionary<string, int> _borderNumber = new()
         {
             {"single", 1 },
             {"thick", 2 },
@@ -1666,13 +2047,13 @@ namespace OpenXmlPowerTools
 
             var inside1Val = (string)inside1.Attribute(W.val);
             var border1Weight = 1;
-            if (BorderNumber.ContainsKey(inside1Val))
-                border1Weight = BorderNumber[inside1Val];
+            if (_borderNumber.ContainsKey(inside1Val))
+                border1Weight = _borderNumber[inside1Val];
 
             var sideToReplaceVal = (string)sideToReplace.Attribute(W.val);
             var sideToReplaceWeight = 1;
-            if (BorderNumber.ContainsKey(sideToReplaceVal))
-                sideToReplaceWeight = BorderNumber[sideToReplaceVal];
+            if (_borderNumber.ContainsKey(sideToReplaceVal))
+                sideToReplaceWeight = _borderNumber[sideToReplaceVal];
 
             if (border1Weight != sideToReplaceWeight)
             {
@@ -1688,11 +2069,11 @@ namespace OpenXmlPowerTools
             if ((int)sideToReplace.Attribute(W.sz) > (int)inside1.Attribute(W.sz))
                 return sideToReplace;
 
-            if (BorderTypePriority.ContainsKey(inside1Val) &&
-                BorderTypePriority.ContainsKey(sideToReplaceVal))
+            if (_borderTypePriority.ContainsKey(inside1Val) &&
+                _borderTypePriority.ContainsKey(sideToReplaceVal))
             {
-                var inside1Pri = BorderTypePriority[inside1Val];
-                var inside2Pri = BorderTypePriority[sideToReplaceVal];
+                var inside1Pri = _borderTypePriority[inside1Val];
+                var inside2Pri = _borderTypePriority[sideToReplaceVal];
                 if (inside1Pri > inside2Pri)
                     return inside1;
                 if (inside2Pri > inside1Pri)
@@ -1720,7 +2101,7 @@ namespace OpenXmlPowerTools
                     color1 = Convert.ToInt32(color1str, 16);
                 }
                 // if the above throws ArgumentException, FormatException, or OverflowException, then abort
-                catch (Exception) 
+                catch (Exception)
                 {
                     return sideToReplace;
                 }
@@ -1754,7 +2135,7 @@ namespace OpenXmlPowerTools
             return rolledStyle;
         }
 
-        private static XName[] SpecialCaseChildProperties =
+        private static readonly XName[] _specialCaseChildProperties =
         {
             W.tblPr,
             W.trPr,
@@ -1769,11 +2150,12 @@ namespace OpenXmlPowerTools
             W.tblStylePr,
             W.tcBorders,
             W.tblBorders,
+            W.tblCellMar,
             W.lang,
             W.numPr,
         };
 
-        private static XName[] MergeChildProperties =
+        private static readonly XName[] _mergeChildProperties =
         {
             W.tblPr,
             W.trPr,
@@ -1783,10 +2165,11 @@ namespace OpenXmlPowerTools
             W.pBdr,
             W.tcBorders,
             W.tblBorders,
+            W.tblCellMar,
             W.numPr,
         };
 
-        private static string[] TableStyleOverrideTypes =
+        private static readonly string[] _tableStyleOverrideTypes =
         {
             "band1Vert",
             "band2Vert",
@@ -1802,7 +2185,7 @@ namespace OpenXmlPowerTools
             "swCell",
         };
 
-        private static Dictionary<string, XName> TableStyleOverrideXNameMap = new Dictionary<string, XName>
+        private static readonly Dictionary<string, XName> _tableStyleOverrideXNameMap = new()
         {
             {"band1Vert", W.oddVBand},
             {"band2Vert", W.evenVBand},
@@ -1818,7 +2201,7 @@ namespace OpenXmlPowerTools
             {"swCell", W.lastRowFirstColumn},
         };
 
-        private static Dictionary<XName, string> TableStyleOverrideXNameRevMap = new Dictionary<XName, string>
+        private static readonly Dictionary<XName, string> _tableStyleOverrideXNameRevMap = new()
         {
             {W.oddVBand, "band1Vert"},
             {W.evenVBand, "band2Vert"},
@@ -1847,7 +2230,7 @@ namespace OpenXmlPowerTools
 
             var hpe = higherPriorityElement
                 .Elements()
-                .Where(e => !SpecialCaseChildProperties.Contains(e.Name))
+                .Where(e => !_specialCaseChildProperties.Contains(e.Name))
                 .ToArray();
             if (highPriIsDirectFormatting == true)
             {
@@ -1861,7 +2244,7 @@ namespace OpenXmlPowerTools
             }
             var lpe = lowerPriorityElement
                 .Elements()
-                .Where(e => !SpecialCaseChildProperties.Contains(e.Name) && (!hpe.Select(z => z.Name).Contains(e.Name) || e.Attribute(PtOpenXml.pt + "fromDirect") != null))
+                .Where(e => !_specialCaseChildProperties.Contains(e.Name) && (!hpe.Select(z => z.Name).Contains(e.Name) || e.Attribute(PtOpenXml.pt + "fromDirect") != null))
                 .ToArray();
             // now filter out any hpe where lpe contains the value, since it was from direct formatting
             hpe = hpe
@@ -1872,7 +2255,7 @@ namespace OpenXmlPowerTools
             var tabs = TabsMerge(higherPriorityElement.Element(W.tabs), lowerPriorityElement.Element(W.tabs));
             var ind = IndMerge(higherPriorityElement.Element(W.ind), lowerPriorityElement.Element(W.ind));
             var lang = LangMerge(higherPriorityElement.Element(W.lang), lowerPriorityElement.Element(W.lang));
-            var mcp = MergeChildProperties
+            var mcp = _mergeChildProperties
                 .Select(e =>
                 {
                     // test is here to prevent unnecessary recursion to make debugging easier
@@ -1894,7 +2277,7 @@ namespace OpenXmlPowerTools
                 })
                 .Where(m => m != null)
                 .ToArray();
-            var tsor = TableStyleOverrideTypes
+            var tsor = _tableStyleOverrideTypes
                 .Select(e =>
                 {
                     // test is here to prevent unnecessary recursion to make debugging easier
@@ -1937,9 +2320,9 @@ namespace OpenXmlPowerTools
             if (lLang != null && hLang == null)
                 return lLang;
             return new XElement(W.lang,
-                hLang.Attribute(W.val) != null ? hLang.Attribute(W.val) : lLang.Attribute(W.val),
-                hLang.Attribute(W.bidi) != null ? hLang.Attribute(W.bidi) : lLang.Attribute(W.bidi),
-                hLang.Attribute(W.eastAsia) != null ? hLang.Attribute(W.eastAsia) : lLang.Attribute(W.eastAsia));
+                hLang.Attribute(W.val) ?? lLang.Attribute(W.val),
+                hLang.Attribute(W.bidi) ?? lLang.Attribute(W.bidi),
+                hLang.Attribute(W.eastAsia) ?? lLang.Attribute(W.eastAsia));
         }
 
         private enum IndAttType
@@ -1961,8 +2344,8 @@ namespace OpenXmlPowerTools
             if (lowerPriorityElement != null && higherPriorityElement == null)
                 return lowerPriorityElement;
 
-            XElement hpe = new XElement(higherPriorityElement);
-            XElement lpe = new XElement(lowerPriorityElement);
+            var hpe = new XElement(higherPriorityElement);
+            var lpe = new XElement(lowerPriorityElement);
 
             if (hpe.Attribute(W.firstLine) != null)
                 lpe.Attributes(W.hanging).Remove();
@@ -2108,11 +2491,7 @@ namespace OpenXmlPowerTools
 
         private static void AnnotateParagraph(FormattingAssemblerInfo fai, WordprocessingDocument wDoc, XElement para, FormattingAssemblerSettings settings)
         {
-            XElement localParaProps = para.Element(W.pPr);
-            if (localParaProps == null)
-            {
-                localParaProps = new XElement(W.pPr);
-            }
+            var localParaProps = para.Element(W.pPr) ?? new XElement(W.pPr);
 
             // get para table props, to be merged.
             XElement tablepPr = null;
@@ -2128,22 +2507,20 @@ namespace OpenXmlPowerTools
                     a.Name == W.endnote);
             if (blockLevelContentContainer.Name == W.tbl)
             {
-                XElement tbl = blockLevelContentContainer;
-                XElement style = tbl.Element(PtOpenXml.pt + "style");
-                XElement cellCnf = para.Ancestors(W.tc).Take(1).Elements(W.tcPr).Elements(W.cnfStyle).FirstOrDefault();
-                XElement rowCnf = para.Ancestors(W.tr).Take(1).Elements(W.trPr).Elements(W.cnfStyle).FirstOrDefault();
+                var tbl = blockLevelContentContainer;
+                var style = tbl.Element(PtOpenXml.pt + "style");
+                var cellCnf = para.Ancestors(W.tc).Take(1).Elements(W.tcPr).Elements(W.cnfStyle).FirstOrDefault();
+                var rowCnf = para.Ancestors(W.tr).Take(1).Elements(W.trPr).Elements(W.cnfStyle).FirstOrDefault();
 
                 if (style != null)
                 {
                     // roll up tblPr, trPr, and tcPr from within a specific style.
                     // add each of these to the table, in PowerTools namespace.
-                    tablepPr = style.Element(W.pPr);
-                    if (tablepPr == null)
-                        tablepPr = new XElement(W.pPr);
+                    tablepPr = style.Element(W.pPr) ?? new XElement(W.pPr);
 
-                    foreach (var ot in TableStyleOverrideTypes)
+                    foreach (var ot in _tableStyleOverrideTypes)
                     {
-                        XName attName = TableStyleOverrideXNameMap[ot];
+                        XName attName = _tableStyleOverrideXNameMap[ot];
                         if ((cellCnf != null && cellCnf.Attribute(attName).ToBoolean() == true) ||
                             (rowCnf != null && rowCnf.Attribute(attName).ToBoolean() == true))
                         {
@@ -2165,13 +2542,13 @@ namespace OpenXmlPowerTools
             if (stylesPart != null)
                 sXDoc = stylesPart.GetXDocument();
 
-            ListItemRetriever.ListItemInfo lif = para.Annotation<ListItemRetriever.ListItemInfo>();
+            var lif = para.Annotation<ListItemRetriever.ListItemInfo>();
 
-            XElement rolledParaProps = ParagraphStyleRollup(para, sXDoc, fai.DefaultParagraphStyleName);
+            var rolledParaProps = ParagraphStyleRollup(para, sXDoc, fai.DefaultParagraphStyleName);
             if (lif != null && lif.IsZeroNumId)
                 rolledParaProps.Elements(W.ind).Remove();
-            XElement toggledParaProps = MergeStyleElement(rolledParaProps, tablepPr);
-            XElement mergedParaProps = MergeStyleElement(localParaProps, toggledParaProps);
+            var toggledParaProps = MergeStyleElement(rolledParaProps, tablepPr);
+            var mergedParaProps = MergeStyleElement(localParaProps, toggledParaProps);
 
             string li = ListItemRetriever.RetrieveListItem(wDoc, para, settings.ListItemRetrieverSettings);
             if (lif != null && lif.IsListItem)
@@ -2188,7 +2565,7 @@ namespace OpenXmlPowerTools
                     bool isLgl = lif.Lvl(ListItemRetriever.GetParagraphLevel(para)).Elements(W.isLgl).Any();
                     if (isLgl && numFmtForLevel != "decimalZero")
                         numFmtForLevel = "decimal";
-                    if (!AcceptableNumFormats.Contains(numFmtForLevel))
+                    if (!_acceptableNumFormats.Contains(numFmtForLevel))
                         throw new UnsupportedNumberingFormatException(numFmtForLevel + " is not a supported numbering format");
                 }
 
@@ -2217,7 +2594,7 @@ namespace OpenXmlPowerTools
                 // if a paragraph contains a numPr with a numId=0, in other words, it is NOT a numbered item, then the indentation from the style
                 // hierarchy is ignored.
 
-                ListItemRetriever.ListItemInfo lii = para.Annotation<ListItemRetriever.ListItemInfo>();
+                var lii = para.Annotation<ListItemRetriever.ListItemInfo>();
                 if (lii.FromParagraph != null)
                 {
                     // order
@@ -2246,8 +2623,8 @@ namespace OpenXmlPowerTools
             // merge mergedParaProps with existing accumulatedParaProps, with mergedParaProps as high pri
             // replace accumulatedParaProps with newly merged
 
-            XElement accumulatedParaProps = para.Element(PtOpenXml.pt + "pPr");
-            XElement newAccumulatedParaProps = MergeStyleElement(mergedParaProps, accumulatedParaProps);
+            var accumulatedParaProps = para.Element(PtOpenXml.pt + "pPr");
+            var newAccumulatedParaProps = MergeStyleElement(mergedParaProps, accumulatedParaProps);
 
             AdjustFontAttributes(wDoc, para, newAccumulatedParaProps, newAccumulatedParaProps.Element(W.rPr), settings);
             newAccumulatedParaProps.Name = PtOpenXml.pt + "pPr";
@@ -2261,7 +2638,7 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static string[] AcceptableNumFormats = new[] {
+        private static readonly string[] _acceptableNumFormats = new[] {
             "decimal",
             "decimalZero",
             "upperRoman",
@@ -2282,9 +2659,8 @@ namespace OpenXmlPowerTools
                 .Elements(W.pPr)
                 .Elements(W.pStyle)
                 .Attributes(W.val)
-                .FirstOrDefault();
-            if (paraStyle == null)
-                paraStyle = defaultParagraphStyleName;
+                .FirstOrDefault() ?? defaultParagraphStyleName;
+
             var rolledUpParaStyleParaProps = new XElement(W.pPr);
             if (stylesXDoc == null)
                 return rolledUpParaStyleParaProps;
@@ -2309,13 +2685,12 @@ namespace OpenXmlPowerTools
             var localParaStyleName = paraStyleName;
             while (localParaStyleName != null)
             {
-                XElement paraStyle = stylesXDoc.Root.Elements(W.style).FirstOrDefault(s =>
+                var paraStyle = stylesXDoc.Root.Elements(W.style).FirstOrDefault(s =>
                     s.Attribute(W.type).Value == "paragraph" &&
                     s.Attribute(W.styleId).Value == localParaStyleName);
                 if (paraStyle == null)
-                {
                     yield break;
-                }
+
                 if (paraStyle.Element(W.pPr) == null)
                 {
                     if (paraStyle.Element(W.rPr) != null)
@@ -2342,10 +2717,11 @@ namespace OpenXmlPowerTools
                 {
                     if (listItemInfo.IsListItem)
                     {
-                        XElement lipPr = listItemInfo.Lvl(ListItemRetriever.GetParagraphLevel(para)).Element(W.pPr);
-                        if (lipPr == null)
-                            lipPr = new XElement(W.pPr);
-                        XElement lirPr = listItemInfo.Lvl(ListItemRetriever.GetParagraphLevel(para)).Element(W.rPr);
+                        var lipPr = listItemInfo.Lvl(ListItemRetriever.GetParagraphLevel(para)).Element(W.pPr)
+                            ?? new XElement(W.pPr);
+
+                        var lirPr = listItemInfo.Lvl(ListItemRetriever.GetParagraphLevel(para)).Element(W.rPr);
+
                         var elementToYield2 = new XElement(W.pPr,
                             lipPr.Attributes(),
                             lipPr.Elements(),
@@ -2364,15 +2740,10 @@ namespace OpenXmlPowerTools
 
         private static void AnnotateRuns(FormattingAssemblerInfo fai, WordprocessingDocument wDoc, XElement root, FormattingAssemblerSettings settings)
         {
-            var runsOrParas = root.Descendants()
-                .Where(rp =>
-                {
-                    return rp.Name == W.r || rp.Name == W.p;
-                });
+            var runsOrParas = root.Descendants().Where(rp => rp.Name == W.r || rp.Name == W.p);
+
             foreach (var runOrPara in runsOrParas)
-            {
                 AnnotateRunProperties(fai, wDoc, runOrPara, settings);
-            }
         }
 
         private static void AnnotateRunProperties(FormattingAssemblerInfo fai, WordprocessingDocument wDoc, XElement runOrPara, FormattingAssemblerSettings settings)
@@ -2390,10 +2761,8 @@ namespace OpenXmlPowerTools
             {
                 localRunProps = runOrPara.Element(W.rPr);
             }
-            if (localRunProps == null)
-            {
-                localRunProps = new XElement(W.rPr);
-            }
+
+            localRunProps ??= new XElement(W.rPr);
 
             // get run table props, to be merged.
             XElement tablerPr = null;
@@ -2408,20 +2777,18 @@ namespace OpenXmlPowerTools
                     a.Name == W.endnote);
             if (blockLevelContentContainer.Name == W.tbl)
             {
-                XElement tbl = blockLevelContentContainer;
-                XElement style = tbl.Element(PtOpenXml.pt + "style");
-                XElement cellCnf = runOrPara.Ancestors(W.tc).Take(1).Elements(W.tcPr).Elements(W.cnfStyle).FirstOrDefault();
-                XElement rowCnf = runOrPara.Ancestors(W.tr).Take(1).Elements(W.trPr).Elements(W.cnfStyle).FirstOrDefault();
+                var tbl = blockLevelContentContainer;
+                var style = tbl.Element(PtOpenXml.pt + "style");
+                var cellCnf = runOrPara.Ancestors(W.tc).Take(1).Elements(W.tcPr).Elements(W.cnfStyle).FirstOrDefault();
+                var rowCnf = runOrPara.Ancestors(W.tr).Take(1).Elements(W.trPr).Elements(W.cnfStyle).FirstOrDefault();
 
                 if (style != null)
                 {
-                    tablerPr = style.Element(W.rPr);
-                    if (tablerPr == null)
-                        tablerPr = new XElement(W.rPr);
+                    tablerPr = style.Element(W.rPr) ?? new XElement(W.rPr);
 
-                    foreach (var ot in TableStyleOverrideTypes)
+                    foreach (var ot in _tableStyleOverrideTypes)
                     {
-                        XName attName = TableStyleOverrideXNameMap[ot];
+                        XName attName = _tableStyleOverrideXNameMap[ot];
                         if ((cellCnf != null && cellCnf.Attribute(attName).ToBoolean() == true) ||
                             (rowCnf != null && rowCnf.Attribute(attName).ToBoolean() == true))
                         {
@@ -2438,7 +2805,7 @@ namespace OpenXmlPowerTools
                     }
                 }
             }
-            XElement rolledRunProps = CharStyleRollup(fai, wDoc, runOrPara);
+            var rolledRunProps = CharStyleRollup(fai, wDoc, runOrPara);
             var toggledRunProps = ToggleMergeRunProps(rolledRunProps, tablerPr);
             var currentRunProps = runOrPara.Element(PtOpenXml.rPr); // this is already stored on the run from previous aggregation of props
             var mergedRunProps = MergeStyleElement(toggledRunProps, currentRunProps);
@@ -2446,17 +2813,14 @@ namespace OpenXmlPowerTools
             XElement pPr = null;
             if (runOrPara.Name == W.p)
                 pPr = runOrPara.Element(PtOpenXml.pPr);
+
             AdjustFontAttributes(wDoc, runOrPara, pPr, newMergedRunProps, settings);
 
             newMergedRunProps.Name = PtOpenXml.rPr;
             if (currentRunProps != null)
-            {
                 currentRunProps.ReplaceWith(newMergedRunProps);
-            }
             else
-            {
                 runOrPara.Add(newMergedRunProps);
-            }
         }
 
         private static XElement CharStyleRollup(FormattingAssemblerInfo fai, WordprocessingDocument wDoc, XElement runOrPara)
@@ -2540,10 +2904,8 @@ namespace OpenXmlPowerTools
                     else
                         charStyle = (string)runOrPara.Ancestors(W.p).First().Elements(W.pPr).Elements(W.pStyle).Attributes(W.val).FirstOrDefault();
                 }
-                if (charStyle == null)
-                {
-                    charStyle = fai.DefaultParagraphStyleName;
-                }
+
+                charStyle ??= fai.DefaultParagraphStyleName;
             }
 
             // A run always must have an ancestor paragraph.
@@ -2582,15 +2944,14 @@ namespace OpenXmlPowerTools
             else
                 paraStyle = fai.DefaultParagraphStyleName;
 
-            string key = (paraStyle == null ? "[null]" : paraStyle) + "~|~" +
-                (charStyle == null ? "[null]" : charStyle);
+            string key = (paraStyle ?? "[null]") + "~|~" + (charStyle ?? "[null]");
             XElement rolledRunProps = null;
 
             if (fai.RolledCharacterStyles.ContainsKey(key))
                 rolledRunProps = fai.RolledCharacterStyles[key];
             else
             {
-                XElement rolledUpCharStyleRunProps = new XElement(W.rPr);
+                var rolledUpCharStyleRunProps = new XElement(W.rPr);
                 if (charStyle != null)
                 {
                     rolledUpCharStyleRunProps =
@@ -2662,38 +3023,29 @@ namespace OpenXmlPowerTools
                 {
                     return (string)s.Attribute(W.type) == "character" &&
                         (string)s.Attribute(W.styleId) == localCharStyleName;
+                })
+                ?? sXDoc.Root.Elements(W.style).FirstOrDefault(s =>
+                {
+                    return (string)s.Attribute(W.styleId) == localCharStyleName;
                 });
-                // if not found, look for paragraph style
+
                 if (charStyle == null)
-                {
-                    charStyle = sXDoc.Root.Elements(W.style).FirstOrDefault(s =>
-                    {
-                        return (string)s.Attribute(W.styleId) == localCharStyleName;
-                    });
-                }
-                if (charStyle == null)
-                {
                     return rValue;
-                }
+
                 if (charStyle.Element(W.rPr) == null)
                 {
                     basedOn = charStyle.Element(W.basedOn);
                     if (basedOn != null)
-                    {
                         localCharStyleName = (string)basedOn.Attribute(W.val);
-                    }
                     else
-                    {
                         return rValue;
-                    }
                 }
+
                 rValue.Push(charStyle.Element(W.rPr));
                 localCharStyleName = null;
                 basedOn = charStyle.Element(W.basedOn);
                 if (basedOn != null)
-                {
                     localCharStyleName = (string)basedOn.Attribute(W.val);
-                }
             }
             return rValue;
         }
@@ -2715,13 +3067,11 @@ namespace OpenXmlPowerTools
                     .Where(e => { return e.Name != W.rFonts; })
                     .Select(higherChildElement =>
                     {
-                        if (TogglePropertyNames.Contains(higherChildElement.Name))
+                        if (_togglePropertyNames.Contains(higherChildElement.Name))
                         {
                             var lowerChildElement = lowerPriorityElement.Element(higherChildElement.Name);
                             if (lowerChildElement == null)
-                            {
                                 return higherChildElement;
-                            }
 
                             var bHigher = higherChildElement.Attribute(W.val) == null || higherChildElement.Attribute(W.val).ToBoolean() == true;
 
@@ -2729,22 +3079,15 @@ namespace OpenXmlPowerTools
 
                             // if higher is true and lower is false, then return true element
                             if (bHigher && !bLower)
-                            {
                                 return higherChildElement;
-                            }
 
                             // if higher is false and lower is true, then return false element
                             if (!bHigher && bLower)
-                            {
                                 return higherChildElement;
-                            }
 
                             // if higher and lower are both true, then return false
                             if (bHigher && bLower)
-                            {
-                                return new XElement(higherChildElement.Name,
-                                    new XAttribute(W.val, "0"));
-                            }
+                                return new XElement(higherChildElement.Name, new XAttribute(W.val, "0"));
 
                             // otherwise, both higher and lower are false so can return higher element.
                             return higherChildElement;
@@ -2764,7 +3107,8 @@ namespace OpenXmlPowerTools
             return newMergedElement;
         }
 
-        private static XName[] TogglePropertyNames = new[] {
+
+        private static readonly XName[] _togglePropertyNames = new[] {
             W.b,
             W.bCs,
             W.caps,
@@ -2779,7 +3123,7 @@ namespace OpenXmlPowerTools
             W.vanish
         };
 
-        private static XName[] PropertyNames = new[] {
+        private static readonly XName[] _propertyNames = new[] {
             W.cs,
             W.rtl,
             W.u,
@@ -2811,43 +3155,45 @@ namespace OpenXmlPowerTools
 
                 if (rPr == null)
                     return;
-                foreach (XName xn in TogglePropertyNames)
-                {
+
+                foreach (XName xn in _togglePropertyNames)
                     ToggleProperties[xn] = GetBoolProperty(rPr, xn);
-                }
-                foreach (XName xn in PropertyNames)
-                {
+                foreach (XName xn in _propertyNames)
                     Properties[xn] = GetXmlProperty(rPr, xn);
-                }
+
                 var rFonts = rPr.Element(W.rFonts);
                 if (rFonts == null)
                 {
-                    this.AsciiFont = null;
-                    this.HAnsiFont = null;
-                    this.EastAsiaFont = null;
-                    this.CsFont = null;
-                    this.Hint = null;
+                    AsciiFont = null;
+                    HAnsiFont = null;
+                    EastAsiaFont = null;
+                    CsFont = null;
+                    Hint = null;
                 }
                 else
                 {
-                    this.AsciiFont = (string)(rFonts.Attribute(W.ascii));
-                    this.HAnsiFont = (string)(rFonts.Attribute(W.hAnsi));
-                    this.EastAsiaFont = (string)(rFonts.Attribute(W.eastAsia));
-                    this.CsFont = (string)(rFonts.Attribute(W.cs));
-                    this.Hint = (string)(rFonts.Attribute(W.hint));
+                    AsciiFont = (string)(rFonts.Attribute(W.ascii));
+                    HAnsiFont = (string)(rFonts.Attribute(W.hAnsi));
+                    EastAsiaFont = (string)(rFonts.Attribute(W.eastAsia));
+                    CsFont = (string)(rFonts.Attribute(W.cs));
+                    Hint = (string)(rFonts.Attribute(W.hint));
                 }
-                XElement csel = this.Properties[W.cs];
-                bool cs = csel != null && (csel.Attribute(W.val) == null || csel.Attribute(W.val).ToBoolean() == true);
-                XElement rtlel = this.Properties[W.rtl];
-                bool rtl = rtlel != null && (rtlel.Attribute(W.val) == null || rtlel.Attribute(W.val).ToBoolean() == true);
+
+                var csel = Properties[W.cs];
+                var cs = csel != null && (csel.Attribute(W.val) == null || csel.Attribute(W.val).ToBoolean() == true);
+                var rtlel = Properties[W.rtl];
+                var rtl = rtlel != null && (rtlel.Attribute(W.val) == null || rtlel.Attribute(W.val).ToBoolean() == true);
                 var bidi = false;
+
                 if (pPr != null)
                 {
                     XElement bidiel = pPr.Element(W.bidi);
                     bidi = bidiel != null && (bidiel.Attribute(W.val) == null || bidiel.Attribute(W.val).ToBoolean() == true);
                 }
+
                 Rtl = cs || rtl || bidi;
                 var lang = rPr.Element(W.lang);
+
                 if (lang != null)
                 {
                     LatinLang = (string)lang.Attribute(W.val);
@@ -2883,7 +3229,7 @@ namespace OpenXmlPowerTools
                 return rPr.Element(propertyName);
             }
 
-            private static XName[] TogglePropertyNames = new[] {
+            private static readonly XName[] _togglePropertyNames = new[] {
                 W.b,
                 W.bCs,
                 W.caps,
@@ -2898,7 +3244,7 @@ namespace OpenXmlPowerTools
                 W.vanish
             };
 
-            private static XName[] PropertyNames = new[] {
+            private static readonly XName[] _propertyNames = new[] {
                 W.cs,
                 W.rtl,
                 W.u,
@@ -2909,7 +3255,7 @@ namespace OpenXmlPowerTools
 
         }
 
-        private static HashSet<char> WeakAndNeutralDirectionalCharacters = new HashSet<char>() {
+        private static readonly HashSet<char> _weakAndNeutralDirectionalCharacters = new() {
             '0',
             '1',
             '2',
@@ -3158,7 +3504,7 @@ namespace OpenXmlPowerTools
                 .toArray();
             */
 
-            var charToExamine = str.FirstOrDefault(c => ! WeakAndNeutralDirectionalCharacters.Contains(c));
+            var charToExamine = str.FirstOrDefault(c => !_weakAndNeutralDirectionalCharacters.Contains(c));
             if (charToExamine == '\0')
                 charToExamine = str[0];
 
@@ -3802,5 +4148,128 @@ namespace OpenXmlPowerTools
         {
             public UnsupportedLanguageException(string message) : base(message) { }
         }
+    }
+
+    public static class MeasureUtils
+    {
+        public static int CalcWidthOfRunInTwips(XElement r)
+        {
+            var fontName = ((string)r.Attribute(PtOpenXml.pt + "FontName") ??
+                           (string)r.Ancestors(W.p).First().Attribute(PtOpenXml.pt + "FontName"))
+                           ?? throw new OpenXmlPowerToolsException("Internal Error, should have FontName attribute");
+            if (_unknownFonts.Contains(fontName))
+                return 0;
+
+            var rPr = r.Element(W.rPr) ?? throw new OpenXmlPowerToolsException("Internal Error, should have run properties");
+            var sz = GetFontSize(r) ?? 22f;
+
+            // unknown font families will throw ArgumentException, in which case just return 0
+            if (!KnownFamilies.Contains(fontName))
+                return 0;
+
+            // in theory, all unknown fonts are found by the above test, but if not...
+            var fs = SKFontStyle.Normal;
+            if (Util.GetBoolProp(rPr, W.b) == true || Util.GetBoolProp(rPr, W.bCs) == true)
+                fs = SKFontStyle.Bold;
+            if (Util.GetBoolProp(rPr, W.i) == true || Util.GetBoolProp(rPr, W.iCs) == true)
+                fs = fs.Equals(SKFontStyle.Bold) ? SKFontStyle.BoldItalic : SKFontStyle.Italic;
+
+            SKTypeface ff;
+            try
+            {
+                ff = SKTypeface.FromFamilyName(fontName, fs);
+            }
+            catch (ArgumentException)
+            {
+                _unknownFonts.Add(fontName);
+                return 0;
+            }
+
+
+            // Appended blank as a quick fix to accommodate &nbsp; that will get
+            // appended to some layout-critical runs such as list item numbers.
+            // In some cases, this might not be required or even wrong, so this
+            // must be revisited.
+            // TODO: Revisit.
+            var runText = r.DescendantsTrimmed(W.txbxContent)
+                .Where(e => e.Name == W.t)
+                .Select(t => (string)t)
+                .StringConcatenate() + " ";
+
+            var tabLength = r.DescendantsTrimmed(W.txbxContent)
+                .Where(e => e.Name == W.tab)
+                .Select(t => (decimal)t.Attribute(PtOpenXml.TabWidth))
+                .Sum();
+
+            if (runText.Length == 0 && tabLength == 0)
+                return 0;
+
+            //int multiplier = 1;
+            //if (runText.Length <= 2)
+            //    multiplier = 100;
+            //else if (runText.Length <= 4)
+            //    multiplier = 50;
+            //else if (runText.Length <= 8)
+            //    multiplier = 25;
+            //else if (runText.Length <= 16)
+            //    multiplier = 12;
+            //else if (runText.Length <= 32)
+            //    multiplier = 6;
+            //if (multiplier != 1)
+            //{
+            //    StringBuilder sb = new StringBuilder();
+            //    for (int i = 0; i < multiplier; i++)
+            //        sb.Append(runText);
+            //    runText = sb.ToString();
+            //}
+
+            //var w = MetricsGetter.GetTextWidth(ff, sz, runText);
+            //return (int)(w / 96m * 1440m / multiplier + tabLength * 1440m);
+
+            sz = (float)(Math.Round((double)(sz / 2 * 4 / 3), 0, MidpointRounding.AwayFromZero)); // pt -> px
+            var w = MetricsGetter.GetTextWidth(ff, sz, runText);
+            return w * 3 / 4 * 20;
+        }
+
+        private static readonly HashSet<string> _unknownFonts = new();
+        private static HashSet<string> _knownFamilies;
+
+        private static HashSet<string> KnownFamilies
+        {
+            get
+            {
+                if (_knownFamilies == null)
+                {
+                    _knownFamilies = new HashSet<string>();
+                    var families = SKFontManager.Default.FontFamilies;
+                    foreach (var fam in families)
+                        _knownFamilies.Add(fam);
+                }
+                return _knownFamilies;
+            }
+        }
+
+        private static float? GetFontSize(XElement e)
+        {
+            var languageType = (string)e.Attribute(PtOpenXml.LanguageType);
+            if (e.Name == W.p)
+            {
+                return GetFontSize(languageType, e.Elements(W.pPr).Elements(W.rPr).FirstOrDefault());
+            }
+            if (e.Name == W.r)
+            {
+                return GetFontSize(languageType, e.Element(W.rPr));
+            }
+            return null;
+        }
+
+        private static float? GetFontSize(string languageType, XElement rPr)
+        {
+            if (rPr == null) return null;
+            return languageType == "bidi"
+                ? (float?)rPr.Elements(W.szCs).Attributes(W.val).FirstOrDefault()
+                : (float?)rPr.Elements(W.sz).Attributes(W.val).FirstOrDefault();
+        }
+
     }
 }

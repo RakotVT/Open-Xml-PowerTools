@@ -531,6 +531,8 @@ namespace OpenXmlPowerTools
                 <xs:complexType>
                     <xs:attribute name='Select' type='xs:string' use='required' />
                     <xs:attribute name='Match' type='xs:string' use='optional' />
+                    <xs:attribute name='And' type='xs:string' use='optional' />
+                    <xs:attribute name='Or' type='xs:string' use='optional' />
                     <xs:attribute name='NotMatch' type='xs:string' use='optional' />
                     <xs:attribute name='Exists' type='xs:string' use='optional' />
                 </xs:complexType>
@@ -612,6 +614,8 @@ namespace OpenXmlPowerTools
             public static XName Depth = "Depth";
             public static XName Width = "Width";
             public static XName Height = "Height";
+            public static XName And = "And";
+            public static XName Or = "Or";
         }
 
         private class TemplateError
@@ -674,7 +678,7 @@ namespace OpenXmlPowerTools
 
                     var width = (long)element.Attribute(PA.Width);
                     var height = (long)element.Attribute(PA.Height);
-                    var xPath = (string)element.Attribute(PA.Select);                    
+                    var xPath = (string)element.Attribute(PA.Select);
 
                     string endocodedImage;
                     try
@@ -803,9 +807,6 @@ namespace OpenXmlPowerTools
                     if (match != null && notMatch != null)
                         return CreateContextErrorMessage(element, "Conditional: Cannot specify both Match and NotMatch", templateError);
 
-                    var hasMatchCondition = match != null || notMatch != null;
-                    var hasExistsCondition = exists.HasValue;
-
                     string testValue = null;
 
                     try
@@ -819,17 +820,61 @@ namespace OpenXmlPowerTools
 
                     var content = element.Elements().Select(e => ContentReplacementTransform(e, data, templateError, wDoc));
 
-                    if (hasExistsCondition)
-                    {
-                        var passed = (exists.Value && !string.IsNullOrEmpty(testValue)) || (!exists.Value && string.IsNullOrEmpty(testValue));
-                        if (passed && !hasMatchCondition)
-                            return content;
-                        if (!passed)
-                            return null;
-                    }
-
-                    if ((match != null && testValue == match) || (notMatch != null && testValue != notMatch))
+                    if ((exists == true && !string.IsNullOrEmpty(testValue)) || (exists == false && string.IsNullOrEmpty(testValue)))
                         return content;
+
+                    if (!string.IsNullOrWhiteSpace(testValue) && bool.TryParse(testValue, out var testCondition))
+                    {
+                        var andValues = (element.Attribute(PA.And)?.Value ?? string.Empty)
+                            .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(x => EvaluateXPathToString(data, x, true)?.ToLowerInvariant())
+                            .Select(x => bool.TryParse(x.Trim(), out var value) && value);
+
+                        var orValues = (element.Attribute(PA.Or)?.Value ?? string.Empty)
+                            .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(x => EvaluateXPathToString(data, x, true)?.ToLowerInvariant())
+                            .Select(x => bool.TryParse(x.Trim(), out var value) && value);
+
+                        if (!string.IsNullOrWhiteSpace(match) && bool.TryParse(match, out var matchCondition))
+                        {
+                            if (andValues.Any())
+                            {
+                                if ((testCondition && andValues.All(x => x)) == matchCondition)
+                                    return content;
+                            }
+                            else if (orValues.Any())
+                            {
+                                if ((testCondition || orValues.Any(x => x)) == matchCondition)
+                                    return content;
+                            }
+                            else if (testCondition == matchCondition)
+                            {
+                                return content;
+                            }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(notMatch) && bool.TryParse(notMatch, out var notMatchCondition))
+                        {
+                            if (andValues.Any())
+                            {
+                                if ((testCondition && andValues.All(x => x)) != notMatchCondition)
+                                    return content;
+                            }
+                            else if (orValues.Any())
+                            {
+                                if ((testCondition || orValues.Any(x => x)) != notMatchCondition)
+                                    return content;
+                            }
+                            else if (testCondition != notMatchCondition)
+                            {
+                                return content;
+                            }
+                        }
+                    }
+                    else if ((match != null && testValue == match) || (notMatch != null && testValue != notMatch))
+                    {
+                        return content;
+                    }
 
                     if (conditionalElse != null)
                         return conditionalElse.Elements().Select(e => ContentReplacementTransform(e, data, templateError, wDoc));
