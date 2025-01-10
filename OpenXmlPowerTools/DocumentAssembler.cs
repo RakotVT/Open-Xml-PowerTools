@@ -72,16 +72,16 @@ namespace OpenXmlPowerTools
 
             xDoc.Elements().First().ReplaceWith(xDocRoot);
             part.PutXDocument();
-            return;
         }
 
-        private static readonly XName[] _metaToForceToBlock = new XName[] {
-            PA.Conditional,
-            PA.EndConditional,
-            PA.Repeat,
-            PA.EndRepeat,
-            PA.Table,
-        };
+        private static readonly XName[] _metaToForceToBlock =
+        [
+            PA.Conditional, 
+            PA.EndConditional, 
+            PA.Repeat, 
+            PA.EndRepeat, 
+            PA.Table
+        ];
 
         private static object ForceBlockLevelAsAppropriate(XNode node, TemplateError te)
         {
@@ -90,15 +90,15 @@ namespace OpenXmlPowerTools
                 if (element.Name == W.p)
                 {
                     var childMeta = element.Elements().Where(n => _metaToForceToBlock.Contains(n.Name)).ToList();
-                    var count = childMeta.Count();
+                    var count = childMeta.Count;
                     if (count == 1)
                     {
-                        var child = childMeta.First();
+                        var child = childMeta[0];
                         var otherTextInParagraph = element.Elements(W.r).Elements(W.t).Select(t => (string)t).StringConcatenate().Trim();
                         if (otherTextInParagraph != "")
                         {
                             var newPara = new XElement(element);
-                            var newMeta = newPara.Elements().Where(n => _metaToForceToBlock.Contains(n.Name)).First();
+                            var newMeta = newPara.Elements().First(n => _metaToForceToBlock.Contains(n.Name));
                             newMeta.ReplaceWith(CreateRunErrorMessage("Error: Unmatched metadata can't be in paragraph with other text", te));
                             return newPara;
                         }
@@ -112,9 +112,9 @@ namespace OpenXmlPowerTools
                     }
                     if (count % 2 == 0)
                     {
-                        if (childMeta.Where(c => c.Name == PA.Repeat).Count() != childMeta.Where(c => c.Name == PA.EndRepeat).Count())
+                        if (childMeta.Count(c => c.Name == PA.Repeat) != childMeta.Count(c => c.Name == PA.EndRepeat))
                             return CreateContextErrorMessage(element, "Error: Mismatch Repeat / EndRepeat at run level", te);
-                        if (childMeta.Where(c => c.Name == PA.Conditional).Count() != childMeta.Where(c => c.Name == PA.EndConditional).Count())
+                        if (childMeta.Count(c => c.Name == PA.Conditional) != childMeta.Count(c => c.Name == PA.EndConditional))
                             return CreateContextErrorMessage(element, "Error: Mismatch Conditional / EndConditional at run level", te);
                         return new XElement(element.Name,
                             element.Attributes(),
@@ -194,7 +194,7 @@ namespace OpenXmlPowerTools
             var tables = xDoc.Descendants(PA.Table).ToList();
             foreach (var table in tables)
             {
-                var followingElement = table.ElementsAfterSelf().Where(e => e.Name == W.tbl || e.Name == W.p).FirstOrDefault();
+                var followingElement = table.ElementsAfterSelf().FirstOrDefault(e => e.Name == W.tbl || e.Name == W.p);
                 if (followingElement == null || followingElement.Name != W.tbl)
                 {
                     table.ReplaceWith(CreateParaErrorMessage("Table metadata is not immediately followed by a table", te));
@@ -243,7 +243,6 @@ namespace OpenXmlPowerTools
                 {
                     metadata.Add(new XAttribute(PA.Depth, conditionalDepth));
                     --conditionalDepth;
-                    continue;
                 }
             }
 
@@ -298,8 +297,8 @@ namespace OpenXmlPowerTools
             }
         }
 
-        private static readonly List<string> _aliasList = new()
-        {
+        private static readonly List<string> _aliasList =
+        [
             PA.Content.ToString(),
             PA.Image.ToString(),
             PA.Table.ToString(),
@@ -308,7 +307,7 @@ namespace OpenXmlPowerTools
             PA.Conditional.ToString(),
             PA.ConditionalElse.ToString(),
             PA.EndConditional.ToString(),
-        };
+        ];
 
         private static object TransformToMetadata(XNode node, XElement data, TemplateError te)
         {
@@ -327,7 +326,7 @@ namespace OpenXmlPowerTools
                             .Trim()
                             .Replace('“', '"')
                             .Replace('”', '"');
-                        if (ccContents.StartsWith("<"))
+                        if (ccContents.StartsWith('<'))
                         {
                             XElement xml = TransformXmlTextToMetadata(te, ccContents);
                             if (xml.Name == W.p || xml.Name == W.r)  // this means there was an error processing the XML.
@@ -362,10 +361,10 @@ namespace OpenXmlPowerTools
                         .Select(t => (string)t)
                         .StringConcatenate()
                         .Trim();
-                    int occurances = paraContents.Select((c, i) => paraContents.Substring(i)).Count(sub => sub.StartsWith("<#"));
+                    int occurances = paraContents.Select((c, i) => paraContents[i..]).Count(sub => sub.StartsWith("<#"));
                     if (paraContents.StartsWith("<#") && paraContents.EndsWith("#>") && occurances == 1)
                     {
-                        var xmlText = paraContents.Substring(2, paraContents.Length - 4).Trim();
+                        var xmlText = paraContents[2..^2].Trim();
                         XElement xml = TransformXmlTextToMetadata(te, xmlText);
                         if (xml.Name == W.p || xml.Name == W.r)
                             return xml;
@@ -374,14 +373,13 @@ namespace OpenXmlPowerTools
                     }
                     if (paraContents.Contains("<#"))
                     {
-                        List<RunReplacementInfo> runReplacementInfo = new List<RunReplacementInfo>();
+                        List<RunReplacementInfo> runReplacementInfo =[];
                         var thisGuid = Guid.NewGuid().ToString();
-                        var r = new Regex("<#.*?#>");
                         XElement xml = null;
-                        OpenXmlRegex.Replace(new[] { element }, r, thisGuid, (para, match) =>
+                        OpenXmlRegex.Replace([element], new Regex("<#.*?#>"), thisGuid, (para, match) =>
                         {
                             var matchString = match.Value.Trim();
-                            var xmlText = matchString.Substring(2, matchString.Length - 4).Trim().Replace('“', '"').Replace('”', '"');
+                            var xmlText = matchString[2..^2].Trim().Replace('“', '"').Replace('”', '"');
                             try
                             {
                                 xml = XElement.Parse(xmlText);
@@ -465,20 +463,19 @@ namespace OpenXmlPowerTools
             return xml;
         }
 
-        private class RunReplacementInfo
+        private sealed class RunReplacementInfo
         {
             public XElement Xml;
             public string XmlExceptionMessage;
             public string SchemaValidationMessage;
         }
-        private class PASchemaSet
+
+        private sealed class PASchemaSet
         {
-            public string XsdMarkup;
             public XmlSchemaSet SchemaSet;
 
             public PASchemaSet(string xsdMarkup)
             {
-                XsdMarkup = xsdMarkup;
                 XmlSchemaSet schemas = new XmlSchemaSet();
                 schemas.Add("", XmlReader.Create(new StringReader(xsdMarkup)));
                 SchemaSet = schemas;
@@ -584,10 +581,9 @@ namespace OpenXmlPowerTools
 
         private static string ValidatePerSchema(XElement element)
         {
-            if (!_pASchemaSets.ContainsKey(element.Name))
+            if (!_pASchemaSets.TryGetValue(element.Name, out var paSchemaSet))
                 return string.Format("Invalid XML: {0} is not a valid element", element.Name.LocalName);
 
-            var paSchemaSet = _pASchemaSets[element.Name];
             XDocument d = new XDocument(element);
             string message = null;
             d.Validate(paSchemaSet.SchemaSet, (sender, e) => message ??= e.Message, true);
@@ -595,32 +591,30 @@ namespace OpenXmlPowerTools
             return message;
         }
 
-        private class PA
+        private static class PA
         {
-            public static XName Content = "Content";
-            public static XName Table = "Table";
-            public static XName Repeat = "Repeat";
-            public static XName EndRepeat = "EndRepeat";
-            public static XName Conditional = "Conditional";
-            public static XName ConditionalElse = "ConditionalElse";
-            public static XName EndConditional = "EndConditional";
-            public static XName Image = "Image";
-
-            public static XName Select = "Select";
-            public static XName Optional = "Optional";
-            public static XName Match = "Match";
-            public static XName NotMatch = "NotMatch";
-            public static XName Exists = "Exists";
-            public static XName Depth = "Depth";
-            public static XName Width = "Width";
-            public static XName Height = "Height";
-            public static XName And = "And";
-            public static XName Or = "Or";
+            public static readonly XName Content = "Content";
+            public static readonly XName Table = "Table";
+            public static readonly XName Repeat = "Repeat";
+            public static readonly XName EndRepeat = "EndRepeat";
+            public static readonly XName Conditional = "Conditional";
+            public static readonly XName ConditionalElse = "ConditionalElse";
+            public static readonly XName EndConditional = "EndConditional";
+            public static readonly XName Image = "Image";
+            public static readonly XName Select = "Select";
+            public static readonly XName Optional = "Optional";
+            public static readonly XName Match = "Match";
+            public static readonly XName NotMatch = "NotMatch";
+            public static readonly XName Exists = "Exists";
+            public static readonly XName Depth = "Depth";
+            public static readonly XName Width = "Width";
+            public static readonly XName Height = "Height";
+            public static readonly XName And = "And";
+            public static readonly XName Or = "Or";
         }
 
-        private class TemplateError
+        private sealed class TemplateError
         {
-            public string Message { get; set; }
             public bool HasError { get; set; } = false;
         }
 
@@ -661,7 +655,7 @@ namespace OpenXmlPowerTools
                     }
                     else
                     {
-                        List<XElement> list = new List<XElement>();
+                        List<XElement> list =[];
                         foreach (string line in newValue.Split('\n'))
                         {
                             list.Add(new XElement(W.r,
@@ -749,7 +743,7 @@ namespace OpenXmlPowerTools
                         .Select(x => ContentReplacementTransform(x, data, templateError, wDoc))
                         .ToList();
                     if (protoRow == null)
-                        return CreateContextErrorMessage(element, string.Format("Table does not contain a prototype row"), templateError);
+                        return CreateContextErrorMessage(element, "Table does not contain a prototype row", templateError);
                     protoRow.Descendants(W.bookmarkStart).Remove();
                     protoRow.Descendants(W.bookmarkEnd).Remove();
                     XElement newTable = new XElement(W.tbl,
@@ -826,12 +820,12 @@ namespace OpenXmlPowerTools
                     if (!string.IsNullOrWhiteSpace(testValue) && bool.TryParse(testValue, out var testCondition))
                     {
                         var andValues = (element.Attribute(PA.And)?.Value ?? string.Empty)
-                            .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Split([';'], StringSplitOptions.RemoveEmptyEntries)
                             .Select(x => EvaluateXPathToString(data, x, true)?.ToLowerInvariant())
                             .Select(x => bool.TryParse(x.Trim(), out var value) && value);
 
                         var orValues = (element.Attribute(PA.Or)?.Value ?? string.Empty)
-                            .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Split([';'], StringSplitOptions.RemoveEmptyEntries)
                             .Select(x => EvaluateXPathToString(data, x, true)?.ToLowerInvariant())
                             .Select(x => bool.TryParse(x.Trim(), out var value) && value);
 
@@ -1006,7 +1000,7 @@ namespace OpenXmlPowerTools
             return graphic;
         }
 
-        private static object CreateContextErrorMessage(XElement element, string errorMessage, TemplateError templateError)
+        private static XElement CreateContextErrorMessage(XElement element, string errorMessage, TemplateError templateError)
         {
             XElement para = element.Descendants(W.p).FirstOrDefault();
             var errorRun = CreateRunErrorMessage(errorMessage, templateError);
